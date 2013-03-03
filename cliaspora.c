@@ -212,9 +212,9 @@ main(int argc, char *argv[])
 			}
 		}
 		if (strcmp(argv[1], "stream") == 0)
-			read_stream(sp, "/stream?_= ");
+			read_stream(sp, "/stream");
 		else if (strcmp(argv[1], "activity") == 0)
-			read_stream(sp, "/activity?_= ");
+			read_stream(sp, "/activity");
 		else
 			usage();
 	} else if (strcmp(argv[0], "lookup") == 0) {
