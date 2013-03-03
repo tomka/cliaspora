@@ -1616,10 +1616,12 @@ read_stream(session_t *sp, const char *url)
 	if (status != HTTP_OK) {
 		warnx("Server replied with code %d", status);
 		ssl_disconnect(cp);
+		return (-1);
 	}
 	if ((node = new_json_node()) == NULL) {
 		warnx("new_json_node()");
 		ssl_disconnect(cp);
+		return (-1);
 	}
 	while ((p = ssl_readln(cp)) != NULL && *p != '[')
 		;
