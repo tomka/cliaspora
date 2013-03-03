@@ -9,7 +9,7 @@ CFLAGS	+= -std=c99 -Wall -DPROGRAM=\"${PROGRAM}\"
 
 all: ${PROGRAM}
 
-${PROGRAM}: ${PROGRAM}.c config.c ssl.c http.c json.c file.c
+${PROGRAM}: ${SOURCES}
 	$(CC) -o $@ ${CFLAGS} ${SOURCES} ${LDFLAGS}
 
 install: ${PROGRAM} ${MANFILE}
