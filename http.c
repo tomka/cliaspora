@@ -189,7 +189,7 @@ http_post(ssl_conn_t *cp, const char *url, const char *cookie,
 		n = strlen(rq);
 	}
 	if (request != NULL) {
-		(void)snprintf(rq + n, len - n, "Content-length: %d\n%s",
+		(void)snprintf(rq + n, len - n, "Content-Length: %d\n%s",
 		    (int)strlen(request), ct);
 		n = strlen(rq);
 		(void)snprintf(rq + n, len - n, "\n%s", request);
