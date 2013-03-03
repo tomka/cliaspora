@@ -45,7 +45,7 @@
 ssl_conn_t *
 ssl_connect(const char *host, u_short port)
 {
-	int	s, saved_errno;
+	int	s;
 	SSL	*handle;
 	SSL_CTX *ctx;
 	ssl_conn_t	   *cp;
@@ -91,11 +91,11 @@ ssl_connect(const char *host, u_short port)
 	}
 	if (SSL_connect(handle) != 1) {
 		ERR_print_errors_fp(stderr);
+		(void)close(s); SSL_free(handle);
 		return (NULL);
 	}
 	if ((cp = malloc(sizeof(ssl_conn_t))) == NULL) {
-		saved_errno = errno; (void)close(s);
-		errno = saved_errno;
+		warn("malloc()"); (void)close(s); SSL_free(handle);
 		return (NULL);
 	}
 	cp->ctx	   = ctx;
