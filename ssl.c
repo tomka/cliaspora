@@ -106,7 +106,7 @@ ssl_connect(const char *host, u_short port)
 	cp->slen   = cp->bufsz = cp->rd = 0;
 	cp->host   = strdup(host);
 	if (cp->host == NULL) {
-		warn("strdup()");
+		warn("strdup()"); ssl_disconnect(cp);
 		return (NULL);
 	}
 	return (cp);
