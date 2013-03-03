@@ -128,6 +128,7 @@ static int	 add_aspect(session_t *, const char *, bool);
 static int	 add_contact(session_t *, int, int);
 static int	 follow_tag(session_t *, const char *);
 static int	 get_attributs(session_t *);
+extern char	 *readpass(void);
 static char	 *diaspora_login(const char *, u_short, const char *,
 				 const char *);
 static void	 groff_printf(const char *, ...);
@@ -155,7 +156,7 @@ main(int argc, char *argv[])
 {
 	int	  ch, eflag, aspect_id, user_id, pm_id;
 	bool	  public;
-	char	  *host, *user, *buf;
+	char	  *host, *user, *pass, *buf;
 	session_t *sp;
 	contact_t *contacts;
 
@@ -188,13 +189,17 @@ main(int argc, char *argv[])
 
 	sp = NULL;
 	if (strcmp(argv[0], "session") == 0) {
-		if (argc < 3)
+		if (argc < 2)
 			usage();
 		if ((user = strtok(argv[1], "@")) == NULL)
 			usage();
 		if ((host = strtok(NULL, "@")) == NULL)
 			usage();
-		sp = new_session(host, SSL_PORT, user, argv[2]);
+		if (argc > 2)
+			pass = argv[2];
+		else if ((pass = readpass()) == NULL)
+			errx(EXIT_FAILURE, "readpass() failed");
+		sp = new_session(host, SSL_PORT, user, pass);
 		if (sp == NULL)
 			errx(EXIT_FAILURE, "Failed to create session.");
 	} else if (strcmp(argv[0], "show") == 0) {
@@ -399,7 +404,7 @@ usage()
 {
 
 	(void)printf("Usage: cliaspora [options] command args ...\n"	\
-	    "       cliaspora session <handle> password\n"		\
+	    "       cliaspora session <handle> [password]\n"		\
 	    "       cliaspora list contacts\n"				\
 	    "       cliaspora list messages\n"				\
 	    "       cliaspora list aspects\n"				\

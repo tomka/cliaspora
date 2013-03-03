@@ -3,7 +3,7 @@ MANFILE	 = ${PROGRAM}.1
 PREFIX   = /usr/local
 BINDIR	 = ${PREFIX}/bin
 MANDIR	 = ${PREFIX}/man/man1
-SOURCES  = ${PROGRAM}.c config.c ssl.c http.c json.c file.c
+SOURCES  = ${PROGRAM}.c config.c ssl.c http.c json.c file.c readpass.c
 LDFLAGS += -lssl -lcrypto
 CFLAGS	+= -std=c99 -Wall -DPROGRAM=\"${PROGRAM}\"
 
