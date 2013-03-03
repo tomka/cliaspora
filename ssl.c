@@ -137,22 +137,30 @@ ssl_read(ssl_conn_t *cp, int waitsecs, void *buf, int size)
 	
 	if (SSL_pending(cp->handle) > 0) {
 		while ((n = SSL_read(cp->handle, buf, size)) == -1) {
-			if (errno != EINTR)
+			if (errno != EINTR) {
+				ERR_print_errors_fp(stderr);
 				return (-1);
+			}
 		}
 		return (n);
 	}
 	tv.tv_sec = waitsecs; tv.tv_usec = 0;
 	FD_ZERO(&rset); FD_SET(cp->sock, &rset);
 	while (select(cp->sock + 1, &rset, NULL, NULL, &tv) == -1) {
-		if (errno != EINTR)
+		if (errno != EINTR) {
+			warn("ssl_read(): select()");
 			return (-1);
+		}
 	}
-	if (!FD_ISSET(cp->sock, &rset))
+	if (!FD_ISSET(cp->sock, &rset)) {
+		warnx("ssl_read(): Timeout");
 		return (TIMEOUT);
+	} 
 	while ((n = SSL_read(cp->handle, buf, size)) == -1) {
-		if (errno != EINTR)
+		if (errno != EINTR) {
+			ERR_print_errors_fp(stderr);
 			return (-1);
+		}
 	}
 	if (n == 0)
 		cp->state = SSL_STATE_DISCONNECTED;
@@ -217,6 +225,7 @@ ssl_readln(ssl_conn_t *cp)
 		return (cp->lnbuf);
 	}
 	cp->slen = cp->rd = 0;
+
 	return (NULL);
 }
 
