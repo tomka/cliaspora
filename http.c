@@ -110,29 +110,29 @@ http_get(ssl_conn_t *cp, const char *url, const char *cookie,
 		warn("malloc()");
 		return (-1);
 	}
-	(void)snprintf(rq, len, "GET %s HTTP/1.0\n", url);
+	(void)snprintf(rq, len, "GET %s HTTP/1.0\r\n", url);
 	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "Location: %s\n", url);
+	(void)snprintf(rq + n, len - n, "Location: %s\r\n", url);
 	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "Host: %s\n", cp->host);
+	(void)snprintf(rq + n, len - n, "Host: %s\r\n", cp->host);
 	n = strlen(rq);
 
 	if (cookie != NULL) {
-		(void)snprintf(rq + n, len - n, "Cookie: %s\n", cookie);
+		(void)snprintf(rq + n, len - n, "Cookie: %s\r\n", cookie);
 		n = strlen(rq);
 	}
 	if (accept != NULL) {
-		(void)snprintf(rq + n, len - n, "Accept: %s\n", accept);
+		(void)snprintf(rq + n, len - n, "Accept: %s\r\n", accept);
 		n = strlen(rq);
 	}
 	if (agent != NULL) {
-		(void)snprintf(rq + n, len - n, "User-Agent: %s\n", agent);
+		(void)snprintf(rq + n, len - n, "User-Agent: %s\r\n", agent);
 		n = strlen(rq);
 	}
-	(void)snprintf(rq + n, len - n, "Accept-Charset: utf-8\n" \
-	    "X-Requested-With: XMLHttpRequest\n");
+	(void)snprintf(rq + n, len - n, "Accept-Charset: utf-8\r\n" \
+	    "X-Requested-With: XMLHttpRequest\r\n");
 	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "\n");
+	(void)snprintf(rq + n, len - n, "\r\n");
 	if (ssl_write(cp, rq, strlen(rq)) == -1) {
 		free(rq);
 		return (-1);
@@ -165,10 +165,10 @@ http_post(ssl_conn_t *cp, const char *url, const char *cookie,
 	len += strlen(cp->host);
 
 	if (type == HTTP_POST_TYPE_JSON)
-		ct = "Content-Type: application/json; charset=UTF-8\n";
+		ct = "Content-Type: application/json; charset=UTF-8\r\n";
 	else {
 		ct = "Content-type: application/x-www-form-" \
-			      "urlencoded;charset=utf-8\n";
+			      "urlencoded;charset=utf-8\r\n";
 	}
 	len += strlen(ct);
 	len += strlen("POST   HTTP/1.0xxCookie: xxAccept: xxUser-Agent: xxxx");
@@ -177,31 +177,31 @@ http_post(ssl_conn_t *cp, const char *url, const char *cookie,
 		warn("malloc()");
 		return (-1);
 	}
-	(void)snprintf(rq, len, "POST %s HTTP/1.0\n", url);
+	(void)snprintf(rq, len, "POST %s HTTP/1.0\r\n", url);
 	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "Host: %s\n", cp->host);
+	(void)snprintf(rq + n, len - n, "Host: %s\r\n", cp->host);
 	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "Location: %s\n", url);
+	(void)snprintf(rq + n, len - n, "Location: %s\r\n", url);
 	n = strlen(rq);
 	if (cookie != NULL) {
-		(void)snprintf(rq + n, len - n, "Cookie: %s\n", cookie);
+		(void)snprintf(rq + n, len - n, "Cookie: %s\r\n", cookie);
 		n = strlen(rq);
 	}
 	if (accept != NULL) {
-		(void)snprintf(rq + n, len - n, "Accept: %s\n", accept);
+		(void)snprintf(rq + n, len - n, "Accept: %s\r\n", accept);
 		n = strlen(rq);
 	}
 	if (agent != NULL) {
-		(void)snprintf(rq + n, len - n, "User-Agent: %s\n", agent);
+		(void)snprintf(rq + n, len - n, "User-Agent: %s\r\n", agent);
 		n = strlen(rq);
 	}
 	if (request != NULL) {
-		(void)snprintf(rq + n, len - n, "Content-Length: %d\n%s",
+		(void)snprintf(rq + n, len - n, "Content-Length: %d\r\n%s",
 		    (int)strlen(request), ct);
 		n = strlen(rq);
-		(void)snprintf(rq + n, len - n, "\n%s", request);
+		(void)snprintf(rq + n, len - n, "\r\n%s", request);
 	} else
-		(void)snprintf(rq + n, len - n, "\n");
+		(void)snprintf(rq + n, len - n, "\r\n");
 	if (ssl_write(cp, rq, strlen(rq)) == -1) {
 		free(rq);
 		return (-1);
