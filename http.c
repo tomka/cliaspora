@@ -98,7 +98,7 @@ http_get(ssl_conn_t *cp, const char *url, const char *cookie,
 	if (agent != NULL)
 		len += strlen(agent);
 	len += strlen("GET HTTP/1.0\nCookie: \nAccept: " \
-		      "\nUser-Agent: \n\n") + 64;
+		      "\nUser-Agent: \nHost: \nLocation\n\n") + 64;
 	len += strlen("Accept-Charset: utf-8\n");
 	len += strlen("X-Requested-With: XMLHttpRequest\n");
 	if ((rq = malloc(len)) == NULL) {
@@ -107,6 +107,11 @@ http_get(ssl_conn_t *cp, const char *url, const char *cookie,
 	}
 	(void)snprintf(rq, len, "GET %s HTTP/1.0\n", url);
 	n = strlen(rq);
+	(void)snprintf(rq + n, len - n, "Location: %s\n", url);
+	n = strlen(rq);
+	(void)snprintf(rq + n, len - n, "Host: %s\n", cp->host);
+	n = strlen(rq);
+
 	if (cookie != NULL) {
 		(void)snprintf(rq + n, len - n, "Cookie: %s\n", cookie);
 		n = strlen(rq);
@@ -160,12 +165,16 @@ http_post(ssl_conn_t *cp, const char *url, const char *cookie,
 	}
 	len += strlen(ct);
 	len += strlen("POST HTTP/1.0\nCookie: \nAccept: \nUser-Agent: \n\n");
-	len += strlen("Content-Length: 1234567890\n") + 8;
+	len += strlen("Content-Length: 1234567890\nHost: \nLocation: \n") + 8;
 	if ((rq = malloc(len)) == NULL) {
 		warn("malloc()");
 		return (-1);
 	}
 	(void)snprintf(rq, len, "POST %s HTTP/1.0\n", url);
+	n = strlen(rq);
+	(void)snprintf(rq + n, len - n, "Host: %s\n", cp->host);
+	n = strlen(rq);
+	(void)snprintf(rq + n, len - n, "Location: %s\n", url);
 	n = strlen(rq);
 	if (cookie != NULL) {
 		(void)snprintf(rq + n, len - n, "Cookie: %s\n", cookie);
