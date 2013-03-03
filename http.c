@@ -69,11 +69,13 @@ get_http_status(ssl_conn_t *cp)
 	char *p, *q;
 
 	while ((p = ssl_readln(cp)) != NULL) {
-		if (strncmp(p, "Status:", 7) != 0)
-			continue;	
-		for (q = p; (q = strtok(q, " ")) != NULL; q = NULL) {
-			if (isdigit(*q))
-				return (strtol(q, NULL, 10));
+		if (strncmp(p, "HTTP/", 5) == 0) {
+			for (q = p; (q = strtok(q, " ")) != NULL; q = NULL) {
+				if (isdigit(*q))
+					return (strtol(q, NULL, 10));
+			}
+			warnx("Unexpected server reply: %s", p);
+			return (-1);
 		}
 	}
 	return (-1);
