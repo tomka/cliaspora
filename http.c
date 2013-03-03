@@ -92,17 +92,20 @@ http_get(ssl_conn_t *cp, const char *url, const char *cookie,
 		warnx("http_get(): url == NULL");
 		return (-1);
 	}
-	len = strlen(url);
+	len = 2 * strlen(url);
 	if (cookie != NULL)
 		len += strlen(cookie);
 	if (accept != NULL)
 		len += strlen(accept);
 	if (agent != NULL)
 		len += strlen(agent);
-	len += strlen("GET HTTP/1.0\nCookie: \nAccept: " \
-		      "\nUser-Agent: \nHost: \nLocation\n\n") + 64;
-	len += strlen("Accept-Charset: utf-8\n");
-	len += strlen("X-Requested-With: XMLHttpRequest\n");
+	len += strlen(cp->host);
+
+	len += strlen("GET   HTTP/1.0xxCookie: xxAccept: xx" \
+		      "User-Agent: xxHost: xxLocation: xxxx") + 32;
+	len += strlen("Accept-Charset: utf-8xx");
+	len += strlen("X-Requested-With: XMLHttpRequestxx");
+
 	if ((rq = malloc(len)) == NULL) {
 		warn("malloc()");
 		return (-1);
@@ -150,7 +153,7 @@ http_post(ssl_conn_t *cp, const char *url, const char *cookie,
 		warnx("http_get(): url == NULL");
 		return (-1);
 	}
-	len = strlen(url);
+	len = 2 * strlen(url);
 	if (request != NULL)
 		len += strlen(request);
 	if (cookie != NULL)
@@ -159,6 +162,8 @@ http_post(ssl_conn_t *cp, const char *url, const char *cookie,
 		len += strlen(accept);
 	if (agent != NULL)
 		len += strlen(agent);
+	len += strlen(cp->host);
+
 	if (type == HTTP_POST_TYPE_JSON)
 		ct = "Content-Type: application/json; charset=UTF-8\n";
 	else {
@@ -166,8 +171,8 @@ http_post(ssl_conn_t *cp, const char *url, const char *cookie,
 			      "urlencoded;charset=utf-8\n";
 	}
 	len += strlen(ct);
-	len += strlen("POST HTTP/1.0\nCookie: \nAccept: \nUser-Agent: \n\n");
-	len += strlen("Content-Length: 1234567890\nHost: \nLocation: \n") + 8;
+	len += strlen("POST   HTTP/1.0xxCookie: xxAccept: xxUser-Agent: xxxx");
+	len += strlen("Content-Length: 1234567890xxHost: xxLocation: xx") + 32;
 	if ((rq = malloc(len)) == NULL) {
 		warn("malloc()");
 		return (-1);
