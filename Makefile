@@ -4,7 +4,7 @@ PREFIX   = /usr/local
 BINDIR	 = ${PREFIX}/bin
 MANDIR	 = ${PREFIX}/man/man1
 SOURCES  = ${PROGRAM}.c config.c ssl.c http.c json.c file.c
-LDFLAGS += -lssl
+LDFLAGS += -lssl -lcrypto
 CFLAGS	+= -std=c99 -Wall -DPROGRAM=\"${PROGRAM}\"
 
 all: ${PROGRAM}
