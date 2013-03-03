@@ -35,6 +35,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <err.h>
 #include <errno.h>
 #include <limits.h>
 
@@ -103,7 +104,11 @@ ssl_connect(const char *host, u_short port)
 	cp->lnbuf  = NULL;
 	cp->state  = SSL_STATE_CONNECTED;
 	cp->slen   = cp->bufsz = cp->rd = 0;
-
+	cp->host   = strdup(host);
+	if (cp->host == NULL) {
+		warn("strdup()");
+		return (NULL);
+	}
 	return (cp);
 }
 
@@ -117,6 +122,7 @@ ssl_disconnect(ssl_conn_t *cp)
 	SSL_shutdown(cp->handle);
 	SSL_free(cp->handle);
 	SSL_CTX_free(cp->ctx);
+	free(cp->host);
 	free(cp->lnbuf);
 	free(cp);
 	errno = saved_errno;

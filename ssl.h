@@ -40,6 +40,7 @@ typedef struct ssl_conn_s {
 	int	state;
 #define SSL_STATE_CONNECTED    1
 #define SSL_STATE_DISCONNECTED 0
+	char	*host;
 	char	*lnbuf;
 	SSL	*handle;
 	SSL_CTX *ctx;
