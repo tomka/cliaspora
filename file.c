@@ -39,6 +39,7 @@
 
 #include "types.h"
 #include "file.h"
+#include "config.h"
 
 #define TMP_TEMPLATE "/tmp/tmp.XXXXXXXX"
 
@@ -55,9 +56,11 @@ delete_postponed()
 {
 	char *pp_path;
 
-	if ((pp_path = get_postponed_path()) != NULL) {
-		if (remove(pp_path) == -1)
-			warn("remove(%s)", pp_path);
+	if (have_postponed()) {
+		if ((pp_path = get_postponed_path()) != NULL) {
+			if (remove(pp_path) == -1)
+				warn("remove(%s)", pp_path);
+		}
 	}
 }
 
@@ -164,11 +167,14 @@ edit_file(char *path)
 		}
 		(void)close(fd); path = tmp_path;
 	}
-	if ((editor = getenv("EDITOR")) == NULL) {
-		warnx("Environment variable EDITOR not defined. Using %s",
-		    DEFAULT_EDITOR);
-		editor = DEFAULT_EDITOR;
-	}
+	if (cfg.editor == NULL || cfg.editor[0] == '\0') {
+		if ((editor = getenv("EDITOR")) == NULL) {
+			warnx("Environment variable EDITOR not defined. " \
+			    "Using %s", DEFAULT_EDITOR);
+			editor = DEFAULT_EDITOR;
+		}
+	} else
+		editor = cfg.editor;
 	if ((cmd = malloc(strlen(editor) + sizeof(tmp_path) + 2)) == NULL) {
 		warn("malloc()"); return (NULL);
 	}

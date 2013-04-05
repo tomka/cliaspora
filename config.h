@@ -32,8 +32,10 @@
 
 typedef struct config_s {
 	int  port;
+	char *user;
 	char *host;
 	char *cookie;
+	char *editor;
 } config_t;
 
 extern config_t cfg;

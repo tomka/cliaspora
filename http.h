@@ -29,7 +29,7 @@
 #define HTTP_CREATED		201
 #define HTTP_FOUND		302
 #define HTTP_REDIRECT		302
-
+#define HTTP_UNAUTHORIZED	401	
 #define HTTP_POST_TYPE_JSON	0x01
 
 

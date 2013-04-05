@@ -15,8 +15,8 @@ ${PROGRAM}: ${SOURCES}
 install: ${PROGRAM} ${MANFILE}
 	if [ ! -d ${BINDIR} ]; then mkdir -p ${BINDIR}; fi
 	if [ ! -d ${MANDIR} ]; then mkdir -p ${MANDIR}; fi
-	install -g wheel -m 0755 -o root ${PROGRAM} ${BINDIR}
-	install -g wheel -m 0644 -o root ${MANFILE} ${MANDIR}
+	install -g 0 -m 0755 -o root ${PROGRAM} ${BINDIR}
+	install -g 0 -m 0644 -o root ${MANFILE} ${MANDIR}
 
 clean:
 	-rm -f ${PROGRAM}

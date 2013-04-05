@@ -63,14 +63,19 @@ typedef union val_u val_t;
 
 var_t vars[] = {
 	{ "host",   VAR_STRING,  (val_t)&cfg.host   },
+	{ "user",   VAR_STRING,  (val_t)&cfg.user   },
 	{ "cookie", VAR_STRING,  (val_t)&cfg.cookie },
+	{ "editor", VAR_STRING,  (val_t)&cfg.editor },
 	{ "port",   VAR_INTEGER, (val_t)&cfg.port   }
+
 };
 #define NVARS (sizeof(vars) / sizeof(var_t))
 
-static int  parse_line(char *);
-static char *cutok(char *, bool *);
-static char *escape_str(const char *);
+static int   write_var(var_t *, FILE *);
+static int   parse_line(char *);
+static char  *cutok(char *, bool *);
+static char  *escape_str(const char *);
+static var_t *find_var(const char *, size_t);
 
 /*
  * Extends the string vector at *strv by the given string and terminates
@@ -282,6 +287,8 @@ read_config()
 	FILE *fp;
 	char *buf, *p, **pp, *path;
 	
+	(void)memset(&cfg, 0, sizeof(cfg));
+
 	for (i = 0; i < NVARS; i++) {
 		if (vars[i].type == VAR_STRING) {
 			if (*vars[i].val.string == NULL)
@@ -303,8 +310,7 @@ read_config()
 	if ((path = cfgpath()) == NULL)
 		return (-1);
 	if ((fp = fopen(path, "r")) == NULL) {
-		warn("fopen(%s)", path);
-		free(path);
+		warn("fopen(%s)", path); free(path);
 		return (-1);
 	}
 	free(path);
@@ -328,63 +334,131 @@ read_config()
 int
 write_config()
 {
-	int  i;
-	char *p, **s, *path;
-	FILE *fp;
-	
+	int   i, fd, varlen;
+	bool  var_written[NVARS];
+	char  *p, *path, *ln, tmpl[] = "/tmp/XXXXXX";
+	FILE  *fp, *tmpfp;
+	var_t *var;
+
 	if ((path = cfgpath()) == NULL)
 		return (-1);
 	if ((fp = fopen(path, "r+")) == NULL && errno == ENOENT) {
 		if ((fp = fopen(path, "w+")) == NULL) {
-			warn("fopen(%s)", path);
-			free(path);
+			warn("fopen(%s)", path); free(path);
 			return (-1);
 		}
 		(void)fchmod(fileno(fp), S_IRUSR|S_IWUSR);
 	} else if (fp == NULL) {
-		warn("fopen(%s)", path);
-		free(path);
+		warn("fopen(%s)", path); free(path);
 		return (-1);
 	}
 	free(path);
+
+	if ((fd = mkstemp(tmpl)) == -1) {
+		warn("mkstemp()"); (void)fclose(fp);
+		return (-1);
+	}
+	if ((tmpfp = fdopen(fd, "r+")) == NULL) {
+		warn("fdopen()"); (void)fclose(fp); (void)close(fd);
+		return (-1);
+	}
+	if ((ln = malloc(_POSIX2_LINE_MAX)) == NULL) {
+		warn("malloc()"); (void)fclose(fp);
+		(void)fclose(tmpfp); (void)remove(tmpl);
+		return (-1);
+	}
+	for (i = 0; i < NVARS; i++)
+		var_written[i] = false;
 	(void)fseek(fp, 0, SEEK_SET);
-	for (i = 0; i < NVARS; i++) {
-		switch (vars[i].type) {
-		case VAR_STRING:
-			p = escape_str(*vars[i].val.string);
-			if (p == NULL)
-				return (-1);
-			(void)fprintf(fp, "%s = \"%s\"\n", vars[i].name, p);
-			free(p);
-			break;
-		case VAR_STRINGS:
-			(void)fprintf(fp, "%s = ", vars[i].name);
-			for (s = *vars[i].val.strings;
-			    s != NULL && *s != NULL; s++) {
-				if (s != *vars[i].val.strings)
-					(void)fputc(' ', fp);
-				p = escape_str(*s);
-				if (p == NULL)
-					return (-1);
-				(void)fprintf(fp, "\"%s\"", p);
-				free(p);
+	while (fgets(ln, _POSIX2_LINE_MAX, fp) != NULL) {
+		for (p = ln; isspace(*p); p++)
+			;
+		if (*p == '\0' || *p == '#')
+			(void)fputs(ln, tmpfp);
+		else {
+			varlen = strcspn(p, " =\t");
+			if ((var = find_var(p, varlen)) == NULL)
+				(void)fputs(ln, tmpfp);
+			else {
+				for (i = 0; i < NVARS; i++) {
+					if (var == &vars[i])
+						var_written[i] = true;
+				}
+				(void)write_var(var, tmpfp);
 			}
-			(void)fputc('\n', fp);
-			break;
-		case VAR_INTEGER:
-			(void)fprintf(fp, "%s = %d\n", vars[i].name,
-			    *vars[i].val.integer);
-			break;
-		case VAR_BOOLEAN:
-			(void)fprintf(fp, "%s = %s\n", vars[i].name,
-			    *vars[i].val.boolean ? "true" : "false");
-			break;
 		}
 	}
-	(void)fflush(fp);
-	(void)ftruncate(fileno(fp), ftell(fp));
-	(void)fclose(fp);
+	for (i = 0; i < NVARS; i++) {
+		if (!var_written[i])
+			(void)write_var(&vars[i], tmpfp);
+	}
+	(void)fflush(tmpfp);
+	(void)fseek(fp, 0, SEEK_SET); (void)fseek(tmpfp, 0, SEEK_SET);
 
+	while (fgets(ln, _POSIX2_LINE_MAX, tmpfp) != NULL)
+		(void)fputs(ln, fp);
+	(void)fclose(tmpfp); (void)remove(tmpl);
+
+	(void)fflush(fp);
+        (void)ftruncate(fileno(fp), ftell(fp));
+        (void)fclose(fp); free(ln);
+
+	return (0);
+}
+
+static var_t *
+find_var(const char *name, size_t len)
+{
+	int i;
+
+	for (i = 0; i < NVARS; i++) {
+		if (strncmp(vars[i].name, name, len) == 0)
+			return (&vars[i]);
+	}
+	return (NULL);
+}
+
+static int
+write_var(var_t *var, FILE *fp)
+{
+	char *p, **s;
+
+	if (var == NULL)
+		return (0);
+
+	switch (var->type) {
+	case VAR_STRING:
+		if (*var->val.string == NULL)
+			return (0);
+		p = escape_str(*var->val.string);
+		if (p == NULL)
+			return (-1);
+		(void)fprintf(fp, "%s = \"%s\"\n",
+		    var->name, p);
+		free(p);
+		break;
+	case VAR_STRINGS:
+		(void)fprintf(fp, "%s = ", var->name);
+		for (s = *var->val.strings;
+		    s != NULL && *s != NULL; s++) {
+			if (s != *var->val.strings)
+				(void)fputc(' ', fp);
+			p = escape_str(*s);
+			if (p == NULL)
+				return (-1);
+			(void)fprintf(fp, "\"%s\"", p);
+			free(p);
+		}
+		(void)fputc('\n', fp);
+		break;
+	case VAR_INTEGER:
+		(void)fprintf(fp, "%s = %d\n", var->name, *var->val.integer);
+		break;
+	case VAR_BOOLEAN:
+		(void)fprintf(fp, "%s = %s\n", var->name,
+		    *var->val.boolean ? "true" : "false");
+		break;
+	}
 	return (0);
 }
 

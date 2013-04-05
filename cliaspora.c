@@ -115,6 +115,7 @@ typedef struct post_s {
 	char *root_handle;
 } post_t;
 
+static int	 close_session(session_t *);
 static int	 read_stream(session_t *, const char *);
 static int	 get_aspect_id(session_t *, const char *);
 static int	 get_contact_id(contact_t *, const char *);
@@ -124,11 +125,13 @@ static int	 like(session_t *, int);
 static int	 comment(session_t *, const char *, int);
 static int	 message(session_t *, const char *, const char *, int);
 static int	 reply(session_t *, const char *, int);
+static int	 reshare(session_t *, int);
 static int	 add_aspect(session_t *, const char *, bool);
 static int	 add_contact(session_t *, int, int);
 static int	 follow_tag(session_t *, const char *);
 static int	 get_attributs(session_t *);
 extern char	 *readpass(void);
+static char	 *get_post_guid(session_t *, int);
 static char	 *diaspora_login(const char *, u_short, const char *,
 				 const char *);
 static void	 groff_printf(const char *, ...);
@@ -150,18 +153,24 @@ static contact_t *lookup_user(session_t *, const char *);
 static contact_t *new_contact_node(contact_t *);
 static contact_t *get_contacts(session_t *);
 static contact_t *find_contact_by_id(contact_t *, int);
+static char	 *strduprintf(const char *, ...);
 
 int
 main(int argc, char *argv[])
 {
 	int	  ch, eflag, aspect_id, user_id, pm_id;
 	bool	  public;
-	char	  *host, *user, *pass, *buf;
+	char	  *host, *user, *pass, *buf, url[256];
 	session_t *sp;
 	contact_t *contacts;
 
-	if (setlocale(LC_CTYPE, "en_US.UTF-8") == NULL)
-		errx(EXIT_FAILURE, "Failed to set locale.");
+	if (setlocale(LC_CTYPE, "en_US.UTF-8") == NULL) {
+		warnx("Failed to set locale to \"en_US.UTF-8\". Using " \
+		    "default locale.");
+		if (setlocale(LC_CTYPE, "C") == NULL)
+			warnx("Failed to set default locale.");
+		warnx("Expect messed up output");
+	}
 
 	eflag = 0;
 	while ((ch = getopt(argc, argv, "eh")) != -1) {
@@ -187,16 +196,28 @@ main(int argc, char *argv[])
 	(void)signal(SIGHUP, cleanup);
 	(void)signal(SIGQUIT, cleanup);
 
+	if (read_config() == -1)
+		warnx("Failed to read config file");
 	sp = NULL;
 	if (strcmp(argv[0], "session") == 0) {
 		if (argc < 2)
 			usage();
-		if ((user = strtok(argv[1], "@")) == NULL)
+		if (strcmp(argv[1], "close") == 0) {
+			if ((sp = create_session()) == NULL) {
+				errx(EXIT_FAILURE,
+				    "Failed to create session.");
+			}
+			close_session(sp);
+			return (EXIT_SUCCESS);
+		}
+		if (strcmp(argv[1], "new") != 0 || argc < 3)
+			usage();
+		if ((user = strtok(argv[2], "@")) == NULL)
 			usage();
 		if ((host = strtok(NULL, "@")) == NULL)
 			usage();
-		if (argc > 2)
-			pass = argv[2];
+		if (argc > 3)
+			pass = argv[3];
 		else if ((pass = readpass()) == NULL)
 			errx(EXIT_FAILURE, "readpass() failed");
 		sp = new_session(host, SSL_PORT, user, pass);
@@ -205,39 +226,34 @@ main(int argc, char *argv[])
 	} else if (strcmp(argv[0], "show") == 0) {
 		if (argc < 2)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		if (strcmp(argv[1], "stream") == 0)
 			read_stream(sp, "/stream");
 		else if (strcmp(argv[1], "activity") == 0)
 			read_stream(sp, "/activity");
-		else
+		else if (strcmp(argv[1], "mystream") == 0) {
+			if (cfg.user == NULL || cfg.user[0] == '\0') {
+				errx(EXIT_FAILURE, "Username not set. " \
+				    "Please create a new session.");
+			}
+			(void)snprintf(url, sizeof(url), "/u/%s", cfg.user);
+			read_stream(sp, url);
+		} else
 			usage();
 	} else if (strcmp(argv[0], "lookup") == 0) {
 		if (argc < 2)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		if ((contacts = lookup_user(sp, argv[1])) == NULL)
 			errx(EXIT_FAILURE, "Failed to look up %s", argv[1]);
 		show_contacts(contacts);
 	} else if (strcmp(argv[0], "list") == 0) {
 		if (argc < 2)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		if (strcmp(argv[1], "contacts") == 0) {
 			if (get_contacts(sp) == NULL)
 				errx(EXIT_FAILURE, "Failed to get contacts");
@@ -258,23 +274,22 @@ main(int argc, char *argv[])
 	} else if (strcmp(argv[0], "like") == 0) {
 		if (argc < 2)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		if (like(sp, strtol(argv[1], NULL, 10)) == -1)
 			errx(EXIT_FAILURE, "Failed to \"like\" post");
-	} else if (strcmp(argv[0], "follow") == 0) {
+	} else if (strcmp(argv[0], "reshare") == 0) {
+		if (argc < 2)
+			usage();
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
+		if (reshare(sp, strtol(argv[1], NULL, 10)) == -1)
+			errx(EXIT_FAILURE, "Failed to reshare post");
+ 	} else if (strcmp(argv[0], "follow") == 0) {
 		if (argc < 3)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE,  "Failed to create session.");
 		if (strcmp(argv[1], "tag") == 0) {
 			if (follow_tag(sp, argv[2]) == -1)
 				errx(EXIT_FAILURE, "Failed to follow tag.");
@@ -303,12 +318,8 @@ main(int argc, char *argv[])
 	} else if (strcmp(argv[0], "add") == 0) {
 		if (argc < 4)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		if (strcmp(argv[1], "aspect") == 0) {
 			public = false;
 			if (strcmp(argv[3], "public") == 0)
@@ -324,41 +335,31 @@ main(int argc, char *argv[])
 	} else if (strcmp(argv[0], "post") == 0) {
 		if (argc < 2)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		if (strcmp(argv[1], "public") != 0 &&
 		    get_aspect_id(sp, argv[1]) == -1)
 			errx(EXIT_FAILURE, "Unknown aspect '%s'", argv[1]);
 		buf = get_input(eflag == 1 ? false : true);
 		if (post(sp, buf, argv[1]) == -1)
 			errx(EXIT_FAILURE, "Failed to post");
-		delete_postponed();
+		if (eflag == 1)
+			delete_postponed();
 	} else if (strcmp(argv[0], "comment") == 0) {
 		if (argc < 2)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		buf = get_input(eflag == 1 ? false : true);
 		if (comment(sp, buf, strtol(argv[1], NULL, 10)) == -1)
 			errx(EXIT_FAILURE, "Failed to send comment");
-		delete_postponed();
+		if (eflag == 1)
+			delete_postponed();
 	} else if (strcmp(argv[0], "message") == 0) {
 		if (argc < 2)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		if (get_contacts(sp) == NULL)
 			errx(EXIT_FAILURE, "Failed to get contacts");
 		if ((pm_id = get_pm_id(sp, argv[1])) == -1) {
@@ -369,29 +370,23 @@ main(int argc, char *argv[])
 		if (message(sp, argc > 2 ? argv[2] : "No subject", buf,
 		    pm_id) == -1)
 			errx(EXIT_FAILURE, "Failed to send message");
-		delete_postponed();
+		if (eflag == 1)
+			delete_postponed();
 	} else if (strcmp(argv[0], "reply") == 0) {
 		if (argc < 2)
 			usage();
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		buf = get_input(eflag == 1 ? false : true);
 		if (reply(sp, buf, strtol(argv[1], NULL, 10)) == -1) {
 			errx(EXIT_FAILURE, "Failed to reply to message %d",
 			    (int)strtol(argv[1], NULL, 10));
 		}
-		delete_postponed();
+		if (eflag == 1)
+			delete_postponed();
 	} else if (strcmp(argv[0], "status") == 0) {
-		if (sp == NULL) {
-			if ((sp = create_session()) == NULL) {
-				errx(EXIT_FAILURE,
-				    "Failed to create session.");
-			}
-		}
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
 		(void)puts("NOTIFICATIONS  NEW MESSAGES");
 		(void)printf("%-13d  %d\n", sp->attr.nc, sp->attr.mc);
 	} else
@@ -403,23 +398,26 @@ static void
 usage()
 {
 
-	(void)printf("Usage: cliaspora [options] command args ...\n"	\
-	    "       cliaspora session <handle> [password]\n"		\
-	    "       cliaspora list contacts\n"				\
-	    "       cliaspora list messages\n"				\
-	    "       cliaspora list aspects\n"				\
-	    "       cliaspora status\n"					\
-	    "       cliaspora lookup <name|handle>\n"			\
-	    "       cliaspora show stream\n"				\
-	    "       cliaspora show activity\n"				\
-	    "       cliaspora [-e] post <aspect>\n"			\
-	    "       cliaspora [-e] comment <post-ID>\n"			\
-	    "       cliaspora [-e] message <handle> [subject]\n"	\
-	    "       cliaspora [-e] reply <message-ID>\n"		\
-	    "       cliaspora like <post-ID>\n"				\
-	    "       cliaspora follow tag <tagname>\n"			\
-	    "       cliaspora follow user <handle> <aspect>\n"		\
-	    "       cliaspora add aspect <aspect-name> <public|private>\n");
+	(void)printf("Usage: cliaspora [options] command args ...\n"	   \
+	    "       cliaspora add aspect <aspect-name> <public|private>\n" \
+	    "       cliaspora follow tag <tagname>\n"			   \
+	    "       cliaspora follow user <handle> <aspect>\n"		   \
+	    "       cliaspora like <post-ID>\n"				   \
+	    "       cliaspora list contacts\n"				   \
+	    "       cliaspora list messages\n"				   \
+	    "       cliaspora list aspects\n"				   \
+	    "       cliaspora lookup <name|handle>\n"			   \
+	    "       cliaspora reshare <post-ID>\n"			   \
+	    "       cliaspora session new <handle> [password]\n"	   \
+	    "       cliaspora session close\n"				   \
+	    "       cliaspora show stream\n"				   \
+	    "       cliaspora show activity\n"				   \
+	    "       cliaspora show mystream\n"				   \
+	    "       cliaspora status\n"					   \
+	    "       cliaspora [-e] comment <post-ID>\n"			   \
+	    "       cliaspora [-e] message <handle> [subject]\n"	   \
+	    "       cliaspora [-e] post <aspect>\n"			   \
+	    "       cliaspora [-e] reply <message-ID>\n");
 	exit(EXIT_FAILURE);
 }
 
@@ -429,6 +427,81 @@ cleanup(int unused)
 	delete_tmpfile();
 	(void)puts("\n\nBye!");
 	exit(EXIT_SUCCESS);
+}
+
+static char *
+strdupstrcat(char **buf, size_t *remain, const char *str, size_t len)
+{
+	char   *p;
+	size_t sz;
+
+	if (len + 1 >= *remain) {
+		if (*buf != NULL)
+			sz = len + 32 + strlen(*buf) + *remain;
+		else
+			sz = len + 32;
+		if ((p = realloc(*buf, sz)) == NULL) {
+			warn("realloc()"); return (NULL);
+		}
+		if (*buf == NULL)
+			*p = '\0';
+		*buf = p; *remain += len + 32;
+	}
+	*remain -= (len + 1);
+	(void)strncat(*buf, str, len);
+	return (*buf);
+}
+
+static char *
+strduprintf(const char *fmt, ...)
+{
+	char	*str, *buf, tmp[64];
+	size_t  bufsz;
+	va_list ap;
+
+	va_start(ap, fmt); buf = NULL; bufsz = 0;
+	while (*fmt != '\0') {
+		if (*fmt == '%') {
+			if (*++fmt == '\0') {
+				va_end(ap); return (buf);
+			}
+		} else {
+			if (strdupstrcat(&buf, &bufsz, fmt++, 1) == NULL)
+				goto error;
+			continue;
+		}
+		switch(*fmt++) {
+		case '%':
+			if (strdupstrcat(&buf, &bufsz, "%", 1) == NULL)
+				goto error;
+			break;	
+		case 'c':
+			(void)snprintf(tmp, sizeof(tmp), "%c",
+			    va_arg(ap, int));
+			if (strdupstrcat(&buf, &bufsz, tmp, 1) == NULL)
+				goto error;
+			break;
+		case 'd':
+			(void)snprintf(tmp, sizeof(tmp), "%d",
+			    va_arg(ap, int));
+			if (strdupstrcat(&buf, &bufsz, tmp,
+			    strlen(tmp)) == NULL)
+				goto error;
+			break;
+		case 's':
+			str = va_arg(ap, char *);
+			if (strdupstrcat(&buf, &bufsz, str,
+			    strlen(str)) == NULL)
+				goto error;
+			break;
+		}
+	}
+	va_end(ap);
+
+	return (buf);
+error:
+	va_end(ap); free(buf);
+	return (NULL);
 }
 
 static int
@@ -452,7 +525,14 @@ get_pm_id(session_t *sp, const char *handle)
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (-1);
 	status = http_get(cp, ctp->url, sp->cookie, "*/*", USER_AGENT);
-	if (status != HTTP_OK) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ssl_disconnect(cp);
+		return (-1);
+	} else if (status == -1) {
+		ssl_disconnect(cp);
+		return (-1);
+	} else if (status != HTTP_OK) {
 		warnx("Server replied with code %d", status);
 		ssl_disconnect(cp);
 		return (-1);
@@ -474,6 +554,66 @@ get_pm_id(session_t *sp, const char *handle)
 	return (id);
 }
 
+static char *
+get_post_guid(session_t *sp, int id)
+{
+	int	    status;
+	ssl_conn_t  *cp;
+	json_node_t *node, *jp;
+	static char *p, *url, guid[64];
+
+	errno = 0;
+	if ((url = strduprintf("/posts/%d", id)) == NULL)
+		return (NULL);
+	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
+		return (NULL);
+	status = http_get(cp, url, sp->cookie, "application/json",
+	    USER_AGENT);
+	free(url);
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ssl_disconnect(cp);
+		return (NULL);
+	} else if (status == -1) {
+		ssl_disconnect(cp);
+		return (NULL);
+	} else if (status != HTTP_OK) {
+		warnx("Server replied with code %d", status);
+		ssl_disconnect(cp);
+		return (NULL);
+	}
+	while ((p = ssl_readln(cp)) != NULL && *p != '{')
+		;
+	if (p == NULL) {
+		if (errno == 0)
+			warnx("Unexpected server reply");
+		ssl_disconnect(cp);
+		return (NULL);
+	}
+	if ((node = new_json_node()) == NULL) {
+		warn("new_json_node()"); ssl_disconnect(cp);
+		return (NULL);
+	}
+	if (parse_json(node, p) == NULL) {
+		ssl_disconnect(cp);
+		return (NULL);
+	}
+	ssl_disconnect(cp);
+
+	for (jp = node->val; jp != NULL; jp = jp->next) {
+		if (jp->var != NULL && strcmp(jp->var, "guid") == 0)
+			break;
+	}
+	if (jp != NULL)
+		(void)strncpy(guid, (char *)jp->val, sizeof(guid));
+	free_json_node(node);
+	if (jp == NULL) {
+		warnx("Couldn't find post's guid");
+		return (NULL);
+	}
+	return (guid);
+}
+
 static contact_t *
 lookup_user(session_t *sp, const char *handle)
 {
@@ -487,16 +627,19 @@ lookup_user(session_t *sp, const char *handle)
 
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (NULL);
-	url = malloc(strlen("/people?q=") + strlen(handle) + 1);
-	if (url == NULL) {
-		warn("malloc()");
+	if ((url = strduprintf("/people?q=%s", handle)) == NULL)
 		return (NULL);
-	}
-	(void)sprintf(url, "/people?q=%s", handle);
 	status = http_get(cp, url, sp->cookie, "application/json, */*",
 	    USER_AGENT);
 	free(url);
-	if (status != HTTP_OK) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ssl_disconnect(cp);
+		return (NULL);
+	} else if (status == -1) {
+		ssl_disconnect(cp);
+		return (NULL);
+	} else if (status != HTTP_OK) {
 		warnx("Server replied with code %d", status);
 		ssl_disconnect(cp);
 		return (NULL);
@@ -508,8 +651,7 @@ lookup_user(session_t *sp, const char *handle)
 	while ((p = ssl_readln(cp)) != NULL && *p != '[')
 		;
 	if (p == NULL) {
-		warnx("Unexpected server answer");
-		ssl_disconnect(cp);
+		warnx("Unexpected server answer"); ssl_disconnect(cp);
 		return (NULL);
 	}
 	if (*p != '[') {
@@ -519,8 +661,7 @@ lookup_user(session_t *sp, const char *handle)
 		return (NULL);
 	}
 	if (parse_json(node, p) == NULL) {
-		ssl_disconnect(cp);
-		free_json_node(node);
+		ssl_disconnect(cp); free_json_node(node);
 		return (NULL);
 	}
 	ssl_disconnect(cp);
@@ -570,7 +711,7 @@ static char *
 diaspora_login(const char *host, u_short port, const char *user,
 	       const char *pass)
 {
-	int	   rqsz;
+	int	   status;
 	char	   *cookie, *rq, *p, *q, *u, *head, *url;
 	ssl_conn_t *cp;
 	const char tmpl[] = "utf8=%%E2%%9C%%93&user%%5Busername%%5D=%s&"  \
@@ -583,24 +724,29 @@ diaspora_login(const char *host, u_short port, const char *user,
 		free(u); free(p);
 		return (NULL);
 	}
-	rqsz = strlen(u) + strlen(p) + strlen(tmpl) + 8;
-	if ((rq = malloc(rqsz)) == NULL) {
-		warn("malloc()");
-		return (NULL);
+	if ((rq = strduprintf(tmpl, u, p)) == NULL) {
+		free(u); free(p); return (NULL);
 	}
-	(void)sprintf(rq, tmpl, u, p); free(u); free(p);
+	free(u); free(p);
 	if ((cp = ssl_connect(host, port)) == NULL) {
-		free(rq);
-		return (NULL);
+		free(rq); return (NULL);
 	}
-	http_post(cp, "/users/sign_in", NULL, NULL, USER_AGENT, 0, rq);
+	status = http_post(cp, "/users/sign_in", NULL, NULL, USER_AGENT,
+	    0, rq);
 	free(rq);
+	if (status >= 400) {
+		warnx("Login failed. Server replied with code %d", status);
+		return (NULL);
+	} else if (status == -1)
+		return (NULL);
 	for (cookie = NULL; (p = ssl_readln(cp)) != NULL && cookie == NULL;) {
 		if (strncmp(p, "Set-Cookie:", 11) == 0) {
+			puts(p);
 			for (q = p; (q = strtok(q, " ;")) != NULL; q = NULL) {
 				if (strncmp(q, "remember_user_token=", 20) != 0)
 					continue;
 				if ((cookie = strdup(q)) == NULL) {
+					warn("strdup()");
 					ssl_disconnect(cp);
 					return (NULL);
 				}
@@ -608,15 +754,41 @@ diaspora_login(const char *host, u_short port, const char *user,
 		}
 	}
 	ssl_disconnect(cp);
-	if (p == NULL)
+	if (p == NULL) {
+		if (errno == 0)
+			warnx("Login failed.");
 		return (NULL);
+	}
 	return (cookie);
+}
+
+static int
+close_session(session_t *sp)
+{
+	int	   status, ret;
+	ssl_conn_t *cp;
+
+	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
+		return (-1);
+	status = http_get(cp, "/users/sign_out", sp->cookie, "*/*",
+	    USER_AGENT);
+	if (status == -1)
+		ret = -1;
+	else if (status == HTTP_FOUND)
+		ret = 0;
+	else {
+		warnx("Server replied with code %d", status);
+		ret = -1;
+	}
+	ssl_disconnect(cp);
+
+	return (ret);
 }
 
 static int
 post(session_t *sp, const char *msg, const char *aspect)
 {
-	int	   rqsz, ret, status;
+	int	   ret, status;
 	char	   *rq, *p;
 	ssl_conn_t *cp;
 	const char tmpl[] = "{\"status_message\":{\"text\":\"%s\", "	 \
@@ -626,22 +798,24 @@ post(session_t *sp, const char *msg, const char *aspect)
 	errno = 0;
 	if ((p = json_escape_str(msg)) == NULL)
 		return (-1);
-	rqsz = strlen(p) + strlen(tmpl) + 1;
-	if ((rq = malloc(rqsz)) == NULL) {
-		free(p);
-		return (-1);
+	if ((rq = strduprintf(tmpl, p, aspect)) == NULL) {
+		free(p); return (-1);
 	}
-	(void)snprintf(rq, rqsz, tmpl, p, aspect);
 	free(p);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (-1);
 	status = http_post(cp, "/status_messages", sp->cookie, NULL,
 	    USER_AGENT, HTTP_POST_TYPE_JSON, rq);
 	free(rq);
-	if (status != HTTP_FOUND) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status != HTTP_FOUND) {
 		warnx("Server replied with code %d", status);
 		ret = -1;
-	} else
+	} else if (status == -1)
+		ret = -1;
+	else
 		ret = 0;
 	ssl_disconnect(cp);
 
@@ -651,76 +825,66 @@ post(session_t *sp, const char *msg, const char *aspect)
 static int
 comment(session_t *sp, const char *msg, int id)
 {
-	int	   rqsz, ret, status;
+	int	   ret, status;
 	char	   *rq, *url, *p;
 	ssl_conn_t *cp;
 	const char tmpl[] = "{\"text\":\"%s\"}";
 
 	errno = 0;
-
-	url = malloc(strlen("/posts/1234567890123/comments") + 1);
-	if (url == NULL) {
-		warn("malloc()");
+	if ((url = strduprintf("/posts/%d/comments", id)) == NULL)
 		return (-1);
-	}
-	(void)sprintf(url, "/posts/%d/comments", id);
 	if ((p = json_escape_str(msg)) == NULL) {
-		free(url);
-		return (-1);
+		free(url); return (-1);
 	}
-	rqsz = strlen(p) + strlen(tmpl) + 1;
-	if ((rq = malloc(rqsz)) == NULL) {
-		free(p); free(url);
-		return (-1);
+	if ((rq = strduprintf(tmpl, p)) == NULL) {
+		free(p); free(url); return (-1);
 	}
-	(void)snprintf(rq, rqsz, tmpl, p);
 	free(p);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (-1);
 	status = http_post(cp, url, sp->cookie, NULL,
 	    USER_AGENT, HTTP_POST_TYPE_JSON, rq);
 	free(rq); free(url);
-	if (status != HTTP_CREATED) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status != HTTP_CREATED) {
 		warnx("Server replied with code %d", status);
 		ret = -1;
-	} else
+	} else if (status == -1)
+		ret = -1;
+	else
 		ret = 0;
 	ssl_disconnect(cp);
 
 	return (ret);
 }
 
-
 static int
 like(session_t *sp, int id)
 {
-	int	   urlsz, status, ret;
+	int	   status, ret;
 	char	   *url;
 	ssl_conn_t *cp;
 	
 	errno = 0;
-
-	urlsz = strlen("/posts/1234567890123/likes") + 1;
-	if ((url = malloc(urlsz)) == NULL)
+	if ((url = strduprintf("/posts/%d/likes", id)) == NULL)
 		return (-1);
-	(void)snprintf(url, urlsz, "/posts/%d/likes", id);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
-		free(url);
-		return (-1);
+		free(url); return (-1);
 	}
 	status = http_post(cp, url, sp->cookie, NULL,
 	    USER_AGENT, HTTP_POST_TYPE_JSON, "[]");
 	free(url);
-	switch (status) {
-	case HTTP_REDIRECT:
-		warnx("Like failed. Session expired");
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
 		ret = -1;
-		break;
-	case HTTP_CREATED:
+	} else if (status == HTTP_CREATED)
 		ret = 0;
-		break;
-	default:
-		warnx("Like failed. Server replied with code %d", status);
+	else if (status == -1)
+		ret = -1;
+	else {
+		warnx("Server replied with code %d", status);
 		ret = -1;
 	}
 	ssl_disconnect(cp);
@@ -731,40 +895,38 @@ like(session_t *sp, int id)
 static int
 message(session_t *sp, const char *subject, const char *msg, int id)
 {
-	int	   rqsz, ret, status;
+	int	   ret, status;
 	char	   *rq, *m, *s;
 	ssl_conn_t *cp;
+	const char tmpl[] = "contact_ids=%d&conversation%%5bsubject" \
+			    "%%5d=%s&conversation%%5btext%%5d=%s\n";
 
 	errno = 0;
-
 	if ((m = urlencode(msg)) == NULL)
 		return (-1);
 	if ((s = urlencode(subject)) == NULL) {
-		free(m);
-		return (-1);
+		free(m); return (-1);
 	}
-	rqsz = strlen(s) + strlen(m) +
-	       strlen("contact_ids=%d&conversation%%5bsubject%%5d=%s&" \
-	    	      "conversation%%5btext%%5d=%s\n") + 32;
-	if ((rq = malloc(rqsz)) == NULL) {
-		warn("malloc()"); free(m); free(s);
-		return (-1);
+	if ((rq = strduprintf(tmpl, id, s, m)) == NULL) {
+		free(m); free(s); return (-1);
 	}
-	(void)snprintf(rq, rqsz,
-	    "contact_ids=%d&conversation%%5bsubject%%5d=%s&" \
-	    "conversation%%5btext%%5d=%s\n", id, s, m);
 	free(m); free(s);
-
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (-1);
 	status = http_post(cp, "/conversations", sp->cookie, NULL,
 	    USER_AGENT, 0, rq);
 	free(rq);
-	if (status != HTTP_FOUND) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status == HTTP_FOUND)
+		ret = 0;
+	else if (status == -1)
+		ret = -1;
+	else {
 		warnx("Server replied with code %d", status);
 		ret = -1;
-	} else
-		ret = 0;
+	}
 	ssl_disconnect(cp);
 
 	return (ret);
@@ -773,64 +935,106 @@ message(session_t *sp, const char *subject, const char *msg, int id)
 static int
 reply(session_t *sp, const char *msg, int msg_id)
 {
-	int	   rqsz, urlsz, ret, status;
+	int	   ret, status;
 	char	   *rq, *url, *p;
 	ssl_conn_t *cp;
 
 	errno = 0;
 
-	url = rq = NULL;
 	if ((p = urlencode(msg)) == NULL)
 		return (-1);
-	urlsz = strlen("/conversations/12345678901234/messages") + 1;
-	rqsz  = strlen("message%%5btext%%5d=%s\n") + strlen(p) + 1;
-	if ((rq = malloc(rqsz)) == NULL || (url = malloc(urlsz)) == NULL) {
-		warn("malloc()"); free(rq); free(url);
+	if ((url = strduprintf("/conversations/%d/messages",
+	    msg_id)) == NULL) {
+		free(p); return (-1);
+	}
+	if ((rq = strduprintf("message%%5btext%%5d=%s\n", p)) == NULL) {
+		free(p); free(url);
 		return (-1);
 	}
-	(void)snprintf(url, urlsz, "/conversations/%d/messages", msg_id);
-	(void)snprintf(rq, rqsz, "message%%5btext%%5d=%s\n", p);
 	free(p);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (-1);
 	status = http_post(cp, url, sp->cookie, NULL, USER_AGENT, 0, rq);
 	free(url); free(rq);
-	if (status != HTTP_FOUND) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status == HTTP_FOUND)
+		ret = 0;
+	else if (status == -1)
+		ret = -1;
+	else {
 		warnx("Server replied with code %d", status);
 		ret = -1;
-	} else
-		ret = 0;
+	}
 	ssl_disconnect(cp);
+	return (ret);
+}
+
+static int
+reshare(session_t *sp, int id)
+{
+	int	   status, ret;
+	char	   *rq, *guid;
+	ssl_conn_t *cp;
+	const char tmpl[] = "{\"root_guid\":\"%s\"}";
+
+	errno = 0;
+	if ((guid = get_post_guid(sp, id)) == NULL)
+		return (-1);
+	if ((rq = strduprintf(tmpl, guid)) == NULL)
+		return (-1);
+	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
+		free(rq); return (-1);
+	}
+	status = http_post(cp, "/reshares", sp->cookie, NULL,
+	    USER_AGENT, HTTP_POST_TYPE_JSON, rq);
+	free(rq);
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status == HTTP_CREATED)
+		ret = 0;
+	else if (status == -1)
+		ret = -1;
+	else {
+		warnx("Server replied with code %d", status);
+		ret = -1;
+	}
+	ssl_disconnect(cp);
+
 	return (ret);
 }
 
 static int
 add_aspect(session_t *sp, const char *name, bool visible)
 {
-	int	   rqsz, status, ret;
+	int	   status, ret;
 	char	   *rq;
 	ssl_conn_t *cp;
-	
-	errno = 0;
+	const char tmpl[] = "aspect%%5bname%%5d=%s&aspect%%5b" \
+			    "contacts_visible%%5d=%d";
 
-	rqsz = strlen("aspect%%5bname%%5d=%s&aspect%%5b" \
-		      "contacts_visible%%5d=%d") + strlen(name) + 32;
-	if ((rq = malloc(rqsz)) == NULL)
+	errno = 0;
+	if ((rq = strduprintf(tmpl, name, visible ? 1 : 0)) == NULL)
 		return (-1);
-	(void)snprintf(rq, rqsz, "aspect%%5bname%%5d=%s&aspect%%5b" \
-	    "contacts_visible%%5d=%d", name, visible ? 1 : 0);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
-		free(rq);
-		return (-1);
+		free(rq); return (-1);
 	}
 	status = http_post(cp, "/aspects", sp->cookie, NULL,
 	    USER_AGENT, 0, rq);
 	free(rq);
-	if (status != HTTP_FOUND) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status == HTTP_FOUND)
+		ret = 0;
+	else if (status == -1)
+		ret = -1;
+	else {
 		warnx("Server replied with code %d", status);
 		ret = -1;
-	} else
-		ret = 0;
+	}
 	ssl_disconnect(cp);
 
 	return (ret);
@@ -839,7 +1043,7 @@ add_aspect(session_t *sp, const char *name, bool visible)
 static int
 follow_tag(session_t *sp, const char *tag)
 {
-	int	   rqsz, status, ret;
+	int	   status, ret;
 	char	   *rq, *p;
 	ssl_conn_t *cp;
 	
@@ -849,22 +1053,27 @@ follow_tag(session_t *sp, const char *tag)
 		tag++;
 	if ((p = urlencode(tag)) == NULL)
 		return (-1);
-	rqsz = strlen("name=") + strlen(p) + 1;
-	if ((rq = malloc(rqsz)) == NULL)
-		return (-1);
-	(void)snprintf(rq, rqsz, "name=%s", p); free(p);
+	if ((rq = strduprintf("name=%s", p)) == NULL) {
+		free(p); return (-1);
+	}
+	free(p);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
-		free(rq);
-		return (-1);
+		free(rq); return (-1);
 	}
 	status = http_post(cp, "/tag_followings", sp->cookie, NULL,
 	    USER_AGENT, 0, rq);
 	free(rq);
-	if (status != HTTP_CREATED) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status == HTTP_CREATED)
+		ret = 0;
+	else if (status == -1)
+		ret = -1;
+	else {
 		warnx("Server replied with code %d", status);
 		ret = -1;
-	} else
-		ret = 0;
+	}
 	ssl_disconnect(cp);
 
 	return (ret);
@@ -873,19 +1082,14 @@ follow_tag(session_t *sp, const char *tag)
 static int
 add_contact(session_t *sp, int aspect, int id)
 {
-	int	   rqsz, status, ret;
+	int	   status, ret;
 	char	   *rq;
 	ssl_conn_t *cp;
-	
-	errno = 0;
+	const char tmpl[] = "aspect_id=%d&person_id=%d&_method=POST";
 
-	rqsz = strlen("aspect_id=%d&person_id=%d&_method=POST") + 64;
-	if ((rq = malloc(rqsz)) == NULL) {
-		warn("malloc()");
+	errno = 0;
+	if ((rq = strduprintf(tmpl, aspect, id)) == NULL)
 		return (-1);
-	}
-	(void)snprintf(rq, rqsz,"aspect_id=%d&person_id=%d&_method=POST",
-	    aspect, id);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
 		free(rq);
 		return (-1);
@@ -893,11 +1097,17 @@ add_contact(session_t *sp, int aspect, int id)
 	status = http_post(cp, "/aspect_memberships.json", sp->cookie, NULL,
 	    USER_AGENT, 0, rq);
 	free(rq);
-	if (status != HTTP_OK) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status == HTTP_OK)
+		ret = 0;
+	else if (status == -1)
+		ret = -1;
+	else {
 		warnx("Server replied with code %d", status);
 		ret = -1;
-	} else
-		ret = 0;
+	}
 	ssl_disconnect(cp);
 
 	return (ret);
@@ -944,6 +1154,10 @@ new_session(const char *host, u_short port, const char *user, const char *pass)
 		warn("strdup()");
 		return (NULL);
 	}
+	if ((cfg.user = strdup(user)) == NULL) {
+		warn("strdup()");
+		return (NULL);
+	}
 	cfg.port = port;
 	write_config();
 
@@ -956,12 +1170,17 @@ create_session()
 	session_t *sp;
 
 	errno = 0;
-	if ((sp = malloc(sizeof(session_t))) == NULL)
-		return (NULL);
-	if (read_config() == -1) {
-		warnx("Failed to read config file");
+	if (cfg.host == NULL || cfg.host[0] == '\0') {
+		warnx("Host not defined. Corrupted config file?");
 		return (NULL);
 	}
+	if (cfg.cookie == NULL || cfg.cookie[0] == '\0') {
+		warnx("Cookie not defined. Corrupted config file?");
+		return (NULL);
+	}
+	if ((sp = malloc(sizeof(session_t))) == NULL)
+		return (NULL);
+
 	sp->host	 = cfg.host;
 	sp->port	 = cfg.port;
 	sp->cookie	 = cfg.cookie; 
@@ -987,8 +1206,12 @@ get_attributs(session_t *sp)
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (-1);
 	status = http_get(cp, "/stream", sp->cookie, "*/*", USER_AGENT);
-	if (status == HTTP_REDIRECT) {
-		ssl_disconnect(cp); warnx("Session expired");
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ssl_disconnect(cp);
+		return (-1);
+	} else if (status == -1) {
+		ssl_disconnect(cp);
 		return (-1);
 	}
 	while ((p = ssl_readln(cp)) != NULL) {
@@ -1188,11 +1411,12 @@ get_msg_index(session_t *sp)
 	bool	    complete, error;
 	char	    *url, *p;
 	msg_idx_t   *index, *ip;
+	const char  tmpl[] = "/conversations?page=%d";
 	ssl_conn_t  *cp;
 	json_node_t *node, *jp1, *jp2, *jp3, *jp4;
-
 	errno = 0;
-	urlsz = strlen("/conversations?page=1234567") + 8;
+
+	urlsz = strlen(tmpl) + 16;
 	if ((url = malloc(urlsz)) == NULL)
 		return (NULL);
 	jp1 = node = new_json_node();
@@ -1201,17 +1425,22 @@ get_msg_index(session_t *sp)
 		return (NULL);
 	}
 	for (complete = error = false, page = 1; !error && !complete; page++) {
-		(void)snprintf(url, urlsz, "/conversations?page=%d", page);
+		(void)snprintf(url, urlsz, tmpl, page);
 		if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
 			free(url);
 			return (NULL);
 		}
 		status = http_get(cp, url, sp->cookie,
 		    "application/json, */*", USER_AGENT);
-		if (status != HTTP_OK && status != HTTP_FOUND) {
+		if (status == HTTP_UNAUTHORIZED) {
+			warnx("You're not logged in. Please create a " \
+			    "new session");
+			error = true;
+		} else if (status != HTTP_OK && status != HTTP_FOUND) {
 			error = true;
 			warnx("Server replied with code %d", status);
-		}
+		} else if (status == -1)
+			error = true;
 		while (!error && !complete && (p = ssl_readln(cp)) != NULL) {
 			if (strncmp(p, "[]", 2) == 0)
 				complete = true;
@@ -1307,6 +1536,7 @@ show_msg_index(session_t *sp)
 	}
 }
 
+
 static contact_t *
 new_contact_node(contact_t *ctp)
 {
@@ -1342,7 +1572,14 @@ get_contacts(session_t *sp)
 		return (NULL);
 	status = http_get(cp, "/contacts", sp->cookie,
 	    "application/json, */*", USER_AGENT);
-	if (status != HTTP_OK && status != HTTP_FOUND) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ssl_disconnect(cp);
+		return (NULL);
+	} else if (status == -1) {
+		ssl_disconnect(cp);
+		return (NULL);
+	} else if (status != HTTP_OK && status != HTTP_FOUND) {
 		warnx("Server replied with code %d", status);
 		ssl_disconnect(cp);
 		return (NULL);
@@ -1405,6 +1642,7 @@ error:
 
 	return (NULL);
 }	
+
 
 static void
 free_contacts(contact_t *ctp)
@@ -1613,7 +1851,14 @@ read_stream(session_t *sp, const char *url)
 		return (-1);
 	status = http_get(cp, url, sp->cookie,
 	    "application/json, */*", USER_AGENT);
-	if (status != HTTP_OK) {
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ssl_disconnect(cp);
+		return (-1);
+	} else if (status == -1) {
+		ssl_disconnect(cp);
+		return (-1);
+	} else if (status != HTTP_OK) {
 		warnx("Server replied with code %d", status);
 		ssl_disconnect(cp);
 		return (-1);
