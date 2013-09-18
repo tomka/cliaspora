@@ -130,8 +130,7 @@ get_postponed_path()
 	len = strlen(pw->pw_dir) + strlen(PATH_POSTPONED) + 2;
 
 	if ((pp_path = malloc(len)) == NULL) {
-		warn("malloc()");
-		return (NULL);
+		warn("malloc()"); return (NULL);
 	}
 	(void)snprintf(pp_path, len, "%s/%s", pw->pw_dir, PATH_POSTPONED);
 
@@ -162,8 +161,7 @@ edit_file(char *path)
 
 	if (path == NULL) {
 		if ((fd = mkstemp(tmp_path)) == -1) {
-			warn("mkstemp()");
-			return (NULL);
+			warn("mkstemp()"); return (NULL);
 		}
 		(void)close(fd); path = tmp_path;
 	}
@@ -207,14 +205,12 @@ read_file(FILE *fp)
 	while ((rd = fread(p, 1, BUFSIZ, fp)) == BUFSIZ) {
 		blocks++; bufsz += BUFSIZ;
 		if ((p = realloc(buf, bufsz)) == NULL) {
-			warn("realloc()"); free(buf);
-			return (NULL);
+			warn("realloc()"); free(buf); return (NULL);
 		}
 		buf = p; p = buf + (blocks - 1) * BUFSIZ;
 	} 
 	if (!feof(fp)) {
-		warn("fread()"); free(buf);
-		return (NULL);
+		warn("fread()"); free(buf); return (NULL);
 	}
 	buf[(blocks - 1) * BUFSIZ + rd] = '\0';
 	return (buf);
@@ -225,11 +221,10 @@ write_postponed(const char *path)
 {
 	int	    rd;
 	FILE	    *in, *out;
-	char	    *pp_path, *buf;
+	char	    *pp_path, buf[BUFSIZ];
 	struct stat sb_in, sb_out;
 
-	out = in = NULL; buf = NULL;
-
+	out = in = NULL;
 	if ((pp_path = get_postponed_path()) == NULL)
 		return (-1);
 	/* Check whether infile == outfile. */
@@ -252,11 +247,7 @@ write_postponed(const char *path)
 		warn("Couldn't create '%s'", pp_path); 
 		goto error;
 	}
-	if ((buf = malloc(BUFSIZ)) == NULL) {
-		warn("malloc()"); 
-		goto error;
-	}
-	while ((rd = fread(buf, 1, BUFSIZ, in)) > 0)
+	while ((rd = fread(buf, 1, sizeof(buf), in)) > 0)
 		(void)fwrite(buf, 1, rd, out);
 	if (ferror(in)) {
 		warn("fread()");
@@ -265,7 +256,7 @@ write_postponed(const char *path)
 		warn("fwrite()");
 		goto error;
 	}
-	(void)fclose(out); (void)fclose(in); free(buf);
+	(void)fclose(out); (void)fclose(in);
 
 	return (0);
 error:
@@ -273,8 +264,6 @@ error:
 		(void)fclose(in);
 	if (out != NULL)
 		(void)fclose(out);
-	free(buf);
-
 	return (-1);
 }
 

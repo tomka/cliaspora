@@ -1,29 +1,31 @@
-.TH cliaspora 1 "2013" "version 0.1.4" "cliaspora"
+.TH cliaspora 1 "2013" "version 0.1.6" "cliaspora"
 .SH NAME
 .B cliaspora
 \(em A command-line client for DIASPORA*
 .SH SYNOPSIS
 .nf
 \fBcliaspora\fP [\fIoptions\fP] \fBcommand\fP \fIargs ...\fP
-\fBcliaspora\fP \fBadd\fP \fBaspect\fP \fIaspect-name\fP \fIpublic\fP|\fIprivate\fP
-\fBcliaspora\fP \fBfollow\fP \fBtag\fP \fItagname\fP
-\fBcliaspora\fP \fBfollow\fP \fBuser\fP \fIhandle\fP \fIaspect\fP
-\fBcliaspora\fP \fBlike\fP \fIpost-ID\fP
-\fBcliaspora\fP \fBlist\fP \fBcontacts\fP
-\fBcliaspora\fP \fBlist\fP \fBmessages\fP
-\fBcliaspora\fP \fBlist\fP \fBaspects\fP
-\fBcliaspora\fP \fBlookup\fP \fIname\fP|\fIhandle\fP
-\fBcliaspora\fP \fBreshare\fP \fIpost-ID\fP
 \fBcliaspora\fP \fBsession new\fP \fIhandle\fP [\fIpassword\fP]
-\fBcliaspora\fP \fBsession close\fP
-\fBcliaspora\fP \fBshow\fP \fBstream\fP
-\fBcliaspora\fP \fBshow\fP \fBactivity\fP
-\fBcliaspora\fP \fBshow\fP \fBmystream\fP
-\fBcliaspora\fP \fBstatus\fP
-\fBcliaspora\fP [\fB-e\fP] \fBcomment\fP \fIpost-ID\fP
-\fBcliaspora\fP [\fB-e\fP] \fBmessage\fP \fIhandle\fP [\fIsubject\fP]
-\fBcliaspora\fP [\fB-e\fP] \fBpost\fP \fIaspect\fP
-\fBcliaspora\fP [\fB-e\fP] \fBreply\fP \fImessage-ID\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBadd\fP \fBaspect\fP \fIaspect-name\fP \fIpublic\fP|\fIprivate\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBdelete\fP \fIpost-ID\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBfollow\fP \fBtag\fP \fItagname\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBfollow\fP \fBuser\fP \fIhandle\fP \fIaspect\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBlike\fP \fIpost-ID\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBlist\fP \fBcontacts\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBlist\fP \fBmessages\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBlist\fP \fBaspects\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBlookup\fP \fIname\fP|\fIhandle\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBreshare\fP \fIpost-ID\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBsession close\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBshow\fP \fBstream\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBshow\fP \fBactivity\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBshow\fP \fBmystream\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBstatus\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBupload\fP \fIaspect\fP \fIfile ...\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBcomment\fP \fIpost-ID\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBmessage\fP \fIhandle\fP [\fIsubject\fP]
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBpost\fP \fIaspect\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBreply\fP \fImessage-ID\fP
 .fi
 .SH DESCRIPTION
 \fBcliaspora\fP is a command-line client for the distributed social network
@@ -35,6 +37,9 @@ cliaspora session new yourusername@yourpod.tld
 The session stays valid until you create a new session, close the session,
 or it expires. A session usually expires after two weeks.
 .SH OPTIONS
+.TP
+.B -a
+Use the given \fIaccount\fP, where \fIaccount\fP is a DIASPORA handle.
 .TP
 .B -e
 Use the editor defined by the \fIeditor\fP variable in $HOME/.cliasporarc or
@@ -48,6 +53,9 @@ Adds \fIaspect-name\fP to your aspect list.
 .TP
 .B comment
 Sends a comment to the given \fIpost-ID\fP.
+.TP
+.B delete
+Deletes the post with the given \fIpost-ID\fP.
 .TP
 .B follow user
 Adds the user with the given \fIhandle\fP to the \fIaspect\fP.
@@ -92,6 +100,9 @@ piped into \(cqpreconv | groff -Tutf8\(cq.
 .TP
 .B status
 Shows the number of new notifications and new messages.
+.TP
+.B upload
+Uploads one or more image files to the given \fIaspect\fP.
 .SH CONFIG FILE
 \fBcliaspora\fP stores session related information in the configuration file
 $HOME/.cliasporarc, which is a newline separated list of
@@ -99,7 +110,13 @@ variable-value pairs. A variable is separated from its value by an equal
 sign (\(cq=\(cq) and optional TABs or spaces. Values containing white spaces
 must be enclosed in double quotes (\(cq"\(cq). A literal double quote or
 backslash (\(cq\(rs\(cq) must be escaped by preceding it with a \(cq\(rs\(cq.
-Empty lines and lines staring with a hash (\(cq#\(cq) are ignored.
+Empty lines and lines starting with a hash (\(cq#\(cq) are ignored.
+.P
+For each account there is a block of session related variables. A block is
+introduced by a label (user@pod.tld) followed by a colon \(cq:\(cq and a
+newline. Variables defined before the first block (global variables) apply to
+all accounts, but can be redefined in each account block.
+
 .SS USER SETTABLE VARIABLES
 .TP
 .B editor

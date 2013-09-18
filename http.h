@@ -27,16 +27,23 @@
 
 #define HTTP_OK			200
 #define HTTP_CREATED		201
+#define HTTP_NO_CONTENT		204
 #define HTTP_FOUND		302
 #define HTTP_REDIRECT		302
 #define HTTP_UNAUTHORIZED	401	
-#define HTTP_POST_TYPE_JSON	0x01
-
+#define HTTP_POST_TYPE_JSON	1
+#define HTTP_POST_TYPE_OCTET	2
+#define HTTP_POST_TYPE_FORM	3
+#define HTTP_FILESZ_LIMIT	4194304	/* File size-limit in bytes. */
 
 extern int  http_get(ssl_conn_t *, const char *, const char *, const char *,
 		     const char *);
 extern int  http_post(ssl_conn_t *, const char *, const char *, const char *,
 		      const char *, int, const char *);
+extern int  http_delete(ssl_conn_t *, const char *, const char *,
+		        const char *);
+extern int  http_upload(ssl_conn_t *, const char *, const char *, const char *,
+			const char *, const char *);
 extern int  get_http_status(ssl_conn_t *);
 extern char *urlencode(const char *);
 

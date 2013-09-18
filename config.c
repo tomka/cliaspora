@@ -46,6 +46,7 @@ config_t cfg;
 
 typedef struct var_s {
 	char *name;
+	bool global;
 	enum {
 		VAR_STRING,
 		VAR_STRINGS,
@@ -62,17 +63,19 @@ typedef struct var_s {
 typedef union val_u val_t;
 
 var_t vars[] = {
-	{ "host",   VAR_STRING,  (val_t)&cfg.host   },
-	{ "user",   VAR_STRING,  (val_t)&cfg.user   },
-	{ "cookie", VAR_STRING,  (val_t)&cfg.cookie },
-	{ "editor", VAR_STRING,  (val_t)&cfg.editor },
-	{ "port",   VAR_INTEGER, (val_t)&cfg.port   }
+	{ "host",   false, VAR_STRING,  (val_t)&cfg.host   },
+	{ "user",   false, VAR_STRING,  (val_t)&cfg.user   },
+	{ "cookie", false, VAR_STRING,  (val_t)&cfg.cookie },
+	{ "editor", true,  VAR_STRING,  (val_t)&cfg.editor },
+	{ "port",   false, VAR_INTEGER, (val_t)&cfg.port   }
 
 };
 #define NVARS (sizeof(vars) / sizeof(var_t))
 
 static int   write_var(var_t *, FILE *);
 static int   parse_line(char *);
+static bool  cmp_label(const char *l0, const char *l1);
+static bool  is_label(const char *);
 static char  *cutok(char *, bool *);
 static char  *escape_str(const char *);
 static var_t *find_var(const char *, size_t);
@@ -97,13 +100,11 @@ add_string(char ***strv, const char *str)
 	}
 	n += 2;
 	if ((p = realloc(*strv, n * sizeof(char *))) == NULL) {
-		free(*strv);
-		return (NULL);
+		free(*strv); return (NULL);
 	}
 	*strv = p;
 	if ((p[n - 2] = strdup(str)) == NULL) {
-		free(p);
-		return (NULL);
+		free(p); return (NULL);
 	}
 	p[n - 1] = NULL;
 
@@ -187,6 +188,56 @@ escape_str(const char *str)
 	return (esc);
 }
 
+static bool
+is_label(const char *str)
+{
+	const char *p;
+
+	if (!isspace(str[0]) && str[0] != ':') {
+		if ((p = strchr(str, ':')) != NULL) {
+			while (isspace(*(++p)))
+				;
+			if (*p == '\0')
+				/* Match. */
+				return (true);
+		}
+	}
+	/* No match. */
+        return (false);
+}
+
+static bool
+cmp_label(const char *l0, const char *l1)
+{
+	while (*l0 != ':' && *l1 != ':' && *l0 == *l1)
+		l0++, l1++;
+	if (*l0 == ':')
+		l0++;
+	if (*l1 == ':')
+		l1++;
+	if ((*l0 != '\0' && !isspace(*l0)) || (*l1 != '\0' && !isspace(*l1)))
+		/* No match */
+		return (false);
+	/* Ignore trailing whitespaces */
+	while (*l0 != '\0' && isspace(*l0))
+		l0++;
+	while (*l1 != '\0' && isspace(*l1))
+		l1++;
+	if (*l0 == *l1)
+		/* == */
+		return (true);
+	/* != */
+	return (false);
+}
+
+static char *
+readln(FILE *fp)
+{
+	static char ln[_POSIX2_LINE_MAX];
+
+	return (fgets(ln, sizeof(ln), fp));
+}
+
 static int
 parse_line(char *str)
 {
@@ -202,13 +253,11 @@ parse_line(char *str)
 	    val++)
 		*val = '\0';
 	if (*val != '=') {
-		warnx("Syntax error: Missing '=':");
-		return (-1);
+		warnx("Syntax error: Missing '=':"); return (-1);
 	}
 	*val++ = '\0'; val += strspn(val, " \t\n");
 	if (*val == '\0' || isspace(*val)) {
-		warnx("Syntax error: Missing value:");
-		return (-1);
+		warnx("Syntax error: Missing value:"); return (-1);
 	}
 	for (i = 0; i < sizeof(vars) / sizeof(vars[0]); i++) {
 		if (strcmp(var, vars[i].name) != 0)
@@ -272,8 +321,7 @@ cfgpath()
 	endpwent();
 	len = strlen(pw->pw_dir) + sizeof(PATH_CONFIG) + 1;
 	if ((path = malloc(len)) == NULL) {
-		warn("malloc()");
-		return (NULL);
+		warn("malloc()"); return (NULL);
 	}
 	(void)snprintf(path, len, "%s/%s", pw->pw_dir, PATH_CONFIG);
 
@@ -281,58 +329,62 @@ cfgpath()
 }
 
 int
-read_config()
+read_config(const char *label)
 {
-	int   lc, i;
+	int  lc;
 	FILE *fp;
-	char *buf, *p, **pp, *path;
+	char *ln, *path;
 	
 	(void)memset(&cfg, 0, sizeof(cfg));
-
-	for (i = 0; i < NVARS; i++) {
-		if (vars[i].type == VAR_STRING) {
-			if (*vars[i].val.string == NULL)
-				continue;
-			p = strdup(*vars[i].val.string);
-			if (p == NULL)
-				return (-1);
-			*vars[i].val.string = p;
-		} else if (vars[i].type == VAR_STRINGS) {
-			if (*vars[i].val.strings == NULL)
-				continue;
-			for (pp = *vars[i].val.strings; *pp != NULL; pp++) {
-				if ((p = strdup(*pp)) == NULL)
-					return (-1);
-				*pp = p;
-			}
-		}
-	}
 	if ((path = cfgpath()) == NULL)
 		return (-1);
 	if ((fp = fopen(path, "r")) == NULL) {
-		warn("fopen(%s)", path); free(path);
-		return (-1);
+		if (errno != ENOENT) {
+			warn("fopen(%s)", path); free(path);
+			return (-1);
+		}
+		free(path);
+		return (ENOENT);
 	}
 	free(path);
 
-	if ((buf = malloc(_POSIX2_LINE_MAX)) == NULL) {
-		warn("malloc()"); (void)fclose(fp);
-		return (-1);
-	}
-	for (lc = 1; fgets(buf, _POSIX2_LINE_MAX, fp) != NULL; lc++) {
-		(void)strtok(buf, "\n");
-		if (parse_line(buf) == -1) {
-			(void)fprintf(stderr, "%s, line %d\n", path, lc);
-			(void)fclose(fp); free(buf);
+	/*
+	 * Get all global variables, that is, variables before the
+	 * first labeled block.
+	 */
+	for (lc = 1; (ln = readln(fp)) != NULL && !is_label(ln); lc++) {
+		(void)strtok(ln, "\n");
+		if (parse_line(ln) == -1) {
+			warnx("%s, line %d", path, lc); (void)fclose(fp);
 			return (-1);
 		}
 	}
-	free(buf); (void)fclose(fp);
+	if (label != NULL) {
+		while (!cmp_label(ln, label) && (ln = readln(fp)) != NULL)
+			lc++;
+		if (ln == NULL || !is_label(ln)) {
+			warnx("Profile '%s' not found", label);
+			(void)fclose(fp); return (-1);
+		}
+
+	} else if (ln == NULL || !is_label(ln)) {
+		warnx("No label found in config file");
+		(void)fclose(fp); return (-1);
+	}
+	/* Read until the next label or EOF. */
+	for (; (ln = readln(fp)) != NULL && !is_label(ln); lc++) {
+		(void)strtok(ln, "\n");
+		if (parse_line(ln) == -1) {
+			warnx("%s, line %d", path, lc);
+			(void)fclose(fp); return (-1);
+		}
+	}
+	(void)fclose(fp);
 	return (0);
 }
 
 int
-write_config()
+write_config(const char *label)
 {
 	int   i, fd, varlen;
 	bool  var_written[NVARS];
@@ -349,53 +401,62 @@ write_config()
 		}
 		(void)fchmod(fileno(fp), S_IRUSR|S_IWUSR);
 	} else if (fp == NULL) {
-		warn("fopen(%s)", path); free(path);
-		return (-1);
+		warn("fopen(%s)", path); free(path); return (-1);
 	}
 	free(path);
 
 	if ((fd = mkstemp(tmpl)) == -1) {
-		warn("mkstemp()"); (void)fclose(fp);
-		return (-1);
+		warn("mkstemp()"); (void)fclose(fp); return (-1);
 	}
 	if ((tmpfp = fdopen(fd, "r+")) == NULL) {
 		warn("fdopen()"); (void)fclose(fp); (void)close(fd);
 		return (-1);
 	}
-	if ((ln = malloc(_POSIX2_LINE_MAX)) == NULL) {
-		warn("malloc()"); (void)fclose(fp);
-		(void)fclose(tmpfp); (void)remove(tmpl);
-		return (-1);
-	}
 	for (i = 0; i < NVARS; i++)
 		var_written[i] = false;
 	(void)fseek(fp, 0, SEEK_SET);
-	while (fgets(ln, _POSIX2_LINE_MAX, fp) != NULL) {
-		for (p = ln; isspace(*p); p++)
-			;
-		if (*p == '\0' || *p == '#')
-			(void)fputs(ln, tmpfp);
-		else {
-			varlen = strcspn(p, " =\t");
-			if ((var = find_var(p, varlen)) == NULL)
+	/* Just copy all global variables, etc. */
+	while ((ln = readln(fp)) != NULL && !cmp_label(ln, label))
+		(void)fputs(ln, tmpfp);
+	if (ln == NULL)
+		/* Label doesn't exist yet. */
+		(void)fprintf(tmpfp, "\n%s:\n", label);
+	else {
+		/* Write label. */
+		(void)fputs(ln, tmpfp);
+		/* Write variables in section as they appear in config file. */
+		while ((ln = readln(fp)) != NULL && !is_label(ln) != 0) {
+			for (p = ln; isspace(*p); p++)
+				;
+			if (*p == '\0' || *p == '#')
 				(void)fputs(ln, tmpfp);
 			else {
-				for (i = 0; i < NVARS; i++) {
-					if (var == &vars[i])
-						var_written[i] = true;
+				varlen = strcspn(p, " =\t");
+				if ((var = find_var(p, varlen)) == NULL)
+					(void)fputs(ln, tmpfp);
+				else {
+					for (i = 0; i < NVARS; i++) {
+						if (var == &vars[i])
+							var_written[i] = true;
+					}
+					(void)write_var(var, tmpfp);
 				}
-				(void)write_var(var, tmpfp);
 			}
 		}
 	}
+	/* Write remaining variables. */
 	for (i = 0; i < NVARS; i++) {
 		if (!var_written[i])
 			(void)write_var(&vars[i], tmpfp);
 	}
+	/* Copy the remaining lines. */ 
+	while (ln != NULL) {
+		(void)fputs(ln, tmpfp); ln = readln(fp);
+	}
 	(void)fflush(tmpfp);
 	(void)fseek(fp, 0, SEEK_SET); (void)fseek(tmpfp, 0, SEEK_SET);
 
-	while (fgets(ln, _POSIX2_LINE_MAX, tmpfp) != NULL)
+	while ((ln = readln(tmpfp)) != NULL)
 		(void)fputs(ln, fp);
 	(void)fclose(tmpfp); (void)remove(tmpl);
 

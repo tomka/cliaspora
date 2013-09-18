@@ -43,6 +43,8 @@
 #include "http.h"
 #include "config.h"
 #include "file.h"
+#include "str.h"
+#include "str.h"
 
 #define USER_AGENT "Cliaspora"
 
@@ -115,6 +117,8 @@ typedef struct post_s {
 	char *root_handle;
 } post_t;
 
+static int	 upload(session_t *, const char *, char * const *);
+static int	 upload_file(session_t *, const char *);
 static int	 close_session(session_t *);
 static int	 read_stream(session_t *, const char *);
 static int	 get_aspect_id(session_t *, const char *);
@@ -122,6 +126,7 @@ static int	 get_contact_id(contact_t *, const char *);
 static int	 get_pm_id(session_t *, const char *);
 static int	 post(session_t *, const char *, const char *);
 static int	 like(session_t *, int);
+static int	 delete_post(session_t *, int);
 static int	 comment(session_t *, const char *, int);
 static int	 message(session_t *, const char *, const char *, int);
 static int	 reply(session_t *, const char *, int);
@@ -153,14 +158,13 @@ static contact_t *lookup_user(session_t *, const char *);
 static contact_t *new_contact_node(contact_t *);
 static contact_t *get_contacts(session_t *);
 static contact_t *find_contact_by_id(contact_t *, int);
-static char	 *strduprintf(const char *, ...);
 
 int
 main(int argc, char *argv[])
 {
-	int	  ch, eflag, aspect_id, user_id, pm_id;
-	bool	  public;
-	char	  *host, *user, *pass, *buf, url[256];
+	int	  ch, eflag, aspect_id, user_id, pm_id; 
+	bool	  public, have_cfg;
+	char	  *account, *host, *user, *pass, *buf, url[256];
 	session_t *sp;
 	contact_t *contacts;
 
@@ -172,9 +176,12 @@ main(int argc, char *argv[])
 		warnx("Expect messed up output");
 	}
 
-	eflag = 0;
-	while ((ch = getopt(argc, argv, "eh")) != -1) {
+	eflag = 0; account = NULL;
+	while ((ch = getopt(argc, argv, "a:eh")) != -1) {
 		switch (ch) {
+		case 'a':
+			account = optarg;
+			break;
 		case 'e':
 			eflag = 1;
 			break;
@@ -196,13 +203,23 @@ main(int argc, char *argv[])
 	(void)signal(SIGHUP, cleanup);
 	(void)signal(SIGQUIT, cleanup);
 
-	if (read_config() == -1)
-		warnx("Failed to read config file");
+	switch (read_config(account)) {
+	case  0:
+		have_cfg = true;
+		break;
+	case -1:
+		errx(EXIT_FAILURE, "Failed to read config file");
+		/* NOTREACHED */
+	default:
+		have_cfg = false;
+	}
 	sp = NULL;
 	if (strcmp(argv[0], "session") == 0) {
 		if (argc < 2)
 			usage();
 		if (strcmp(argv[1], "close") == 0) {
+			if (!have_cfg)
+				errx(EXIT_FAILURE, "There is no session.");
 			if ((sp = create_session()) == NULL) {
 				errx(EXIT_FAILURE,
 				    "Failed to create session.");
@@ -223,7 +240,9 @@ main(int argc, char *argv[])
 		sp = new_session(host, SSL_PORT, user, pass);
 		if (sp == NULL)
 			errx(EXIT_FAILURE, "Failed to create session.");
-	} else if (strcmp(argv[0], "show") == 0) {
+	} else if (!have_cfg)
+		errx(EXIT_FAILURE, "Please create a session first.");
+	else if (strcmp(argv[0], "show") == 0) {
 		if (argc < 2)
 			usage();
 		if ((sp = create_session()) == NULL)
@@ -278,6 +297,24 @@ main(int argc, char *argv[])
 			errx(EXIT_FAILURE, "Failed to create session.");
 		if (like(sp, strtol(argv[1], NULL, 10)) == -1)
 			errx(EXIT_FAILURE, "Failed to \"like\" post");
+	} else if (strcmp(argv[0], "delete") == 0) {
+		if (argc < 2)
+			usage();
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
+		if (delete_post(sp, strtol(argv[1], NULL, 10)) == -1)
+			errx(EXIT_FAILURE, "Failed to delete post");
+	} else if (strcmp(argv[0], "upload") == 0) {
+		if (argc < 3)
+			usage();
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
+		if (strcmp(argv[1], "public") != 0 &&
+		    get_aspect_id(sp, argv[1]) == -1) {
+			errx(EXIT_FAILURE, "Unknown aspect '%s'", argv[1]);
+		}
+		if (upload(sp, argv[1], &argv[2]) == -1)
+			errx(EXIT_FAILURE, "Failed to upload file(s).");
 	} else if (strcmp(argv[0], "reshare") == 0) {
 		if (argc < 2)
 			usage();
@@ -338,8 +375,9 @@ main(int argc, char *argv[])
 		if ((sp = create_session()) == NULL)
 			errx(EXIT_FAILURE, "Failed to create session.");
 		if (strcmp(argv[1], "public") != 0 &&
-		    get_aspect_id(sp, argv[1]) == -1)
+		    get_aspect_id(sp, argv[1]) == -1) {
 			errx(EXIT_FAILURE, "Unknown aspect '%s'", argv[1]);
+		}
 		buf = get_input(eflag == 1 ? false : true);
 		if (post(sp, buf, argv[1]) == -1)
 			errx(EXIT_FAILURE, "Failed to post");
@@ -398,26 +436,29 @@ static void
 usage()
 {
 
-	(void)printf("Usage: cliaspora [options] command args ...\n"	   \
-	    "       cliaspora add aspect <aspect-name> <public|private>\n" \
-	    "       cliaspora follow tag <tagname>\n"			   \
-	    "       cliaspora follow user <handle> <aspect>\n"		   \
-	    "       cliaspora like <post-ID>\n"				   \
-	    "       cliaspora list contacts\n"				   \
-	    "       cliaspora list messages\n"				   \
-	    "       cliaspora list aspects\n"				   \
-	    "       cliaspora lookup <name|handle>\n"			   \
-	    "       cliaspora reshare <post-ID>\n"			   \
-	    "       cliaspora session new <handle> [password]\n"	   \
-	    "       cliaspora session close\n"				   \
-	    "       cliaspora show stream\n"				   \
-	    "       cliaspora show activity\n"				   \
-	    "       cliaspora show mystream\n"				   \
-	    "       cliaspora status\n"					   \
-	    "       cliaspora [-e] comment <post-ID>\n"			   \
-	    "       cliaspora [-e] message <handle> [subject]\n"	   \
-	    "       cliaspora [-e] post <aspect>\n"			   \
-	    "       cliaspora [-e] reply <message-ID>\n");
+	(void)printf("Usage: cliaspora [options] command args ...\n"	      \
+	    "       cliaspora session new <handle> [password]\n"	      \
+	    "       cliaspora [-a account] add aspect <aspect-name> "	      \
+	    "<public|private>\n"					      \
+	    "       cliaspora [-a account] delete <post-ID>\n"		      \
+	    "       cliaspora [-a account] follow tag <tagname>\n"	      \
+	    "       cliaspora [-a account] follow user <handle> <aspect>\n"   \
+	    "       cliaspora [-a account] like <post-ID>\n"		      \
+	    "       cliaspora [-a account] list contacts\n"		      \
+	    "       cliaspora [-a account] list messages\n"		      \
+	    "       cliaspora [-a account] list aspects\n"		      \
+	    "       cliaspora [-a account] lookup <name|handle>\n"	      \
+	    "       cliaspora [-a account] reshare <post-ID>\n"		      \
+	    "       cliaspora [-a account] session close\n"		      \
+	    "       cliaspora [-a account] show stream\n"		      \
+	    "       cliaspora [-a account] show activity\n"		      \
+	    "       cliaspora [-a account] show mystream\n"		      \
+	    "       cliaspora [-a account] status\n"			      \
+	    "       cliaspora [-a account] upload <aspect> <file> ...\n"      \
+	    "       cliaspora [-a account][-e] comment <post-ID>\n"	      \
+	    "       cliaspora [-a account][-e] message <handle> [subject]\n"  \
+	    "       cliaspora [-a account][-e] post <aspect>\n"		      \
+	    "       cliaspora [-a account][-e] reply <message-ID>\n");
 	exit(EXIT_FAILURE);
 }
 
@@ -427,81 +468,6 @@ cleanup(int unused)
 	delete_tmpfile();
 	(void)puts("\n\nBye!");
 	exit(EXIT_SUCCESS);
-}
-
-static char *
-strdupstrcat(char **buf, size_t *remain, const char *str, size_t len)
-{
-	char   *p;
-	size_t sz;
-
-	if (len + 1 >= *remain) {
-		if (*buf != NULL)
-			sz = len + 32 + strlen(*buf) + *remain;
-		else
-			sz = len + 32;
-		if ((p = realloc(*buf, sz)) == NULL) {
-			warn("realloc()"); return (NULL);
-		}
-		if (*buf == NULL)
-			*p = '\0';
-		*buf = p; *remain += len + 32;
-	}
-	*remain -= (len + 1);
-	(void)strncat(*buf, str, len);
-	return (*buf);
-}
-
-static char *
-strduprintf(const char *fmt, ...)
-{
-	char	*str, *buf, tmp[64];
-	size_t  bufsz;
-	va_list ap;
-
-	va_start(ap, fmt); buf = NULL; bufsz = 0;
-	while (*fmt != '\0') {
-		if (*fmt == '%') {
-			if (*++fmt == '\0') {
-				va_end(ap); return (buf);
-			}
-		} else {
-			if (strdupstrcat(&buf, &bufsz, fmt++, 1) == NULL)
-				goto error;
-			continue;
-		}
-		switch(*fmt++) {
-		case '%':
-			if (strdupstrcat(&buf, &bufsz, "%", 1) == NULL)
-				goto error;
-			break;	
-		case 'c':
-			(void)snprintf(tmp, sizeof(tmp), "%c",
-			    va_arg(ap, int));
-			if (strdupstrcat(&buf, &bufsz, tmp, 1) == NULL)
-				goto error;
-			break;
-		case 'd':
-			(void)snprintf(tmp, sizeof(tmp), "%d",
-			    va_arg(ap, int));
-			if (strdupstrcat(&buf, &bufsz, tmp,
-			    strlen(tmp)) == NULL)
-				goto error;
-			break;
-		case 's':
-			str = va_arg(ap, char *);
-			if (strdupstrcat(&buf, &bufsz, str,
-			    strlen(str)) == NULL)
-				goto error;
-			break;
-		}
-	}
-	va_end(ap);
-
-	return (buf);
-error:
-	va_end(ap); free(buf);
-	return (NULL);
 }
 
 static int
@@ -527,15 +493,12 @@ get_pm_id(session_t *sp, const char *handle)
 	status = http_get(cp, ctp->url, sp->cookie, "*/*", USER_AGENT);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	} else if (status == -1) {
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	} else if (status != HTTP_OK) {
 		warnx("Server replied with code %d", status);
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	}
 	for (q = NULL; q == NULL && (p = ssl_readln(cp)) != NULL;)
 		q = strstr(p, "/conversations/new?contact_id=");
@@ -572,31 +535,27 @@ get_post_guid(session_t *sp, int id)
 	free(url);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
-		ssl_disconnect(cp);
-		return (NULL);
+		ssl_disconnect(cp); return (NULL);
 	} else if (status == -1) {
 		ssl_disconnect(cp);
 		return (NULL);
 	} else if (status != HTTP_OK) {
 		warnx("Server replied with code %d", status);
-		ssl_disconnect(cp);
-		return (NULL);
+		ssl_disconnect(cp); return (NULL);
 	}
 	while ((p = ssl_readln(cp)) != NULL && *p != '{')
 		;
 	if (p == NULL) {
 		if (errno == 0)
 			warnx("Unexpected server reply");
-		ssl_disconnect(cp);
-		return (NULL);
+		ssl_disconnect(cp); return (NULL);
 	}
 	if ((node = new_json_node()) == NULL) {
 		warn("new_json_node()"); ssl_disconnect(cp);
 		return (NULL);
 	}
 	if (parse_json(node, p) == NULL) {
-		ssl_disconnect(cp);
-		return (NULL);
+		ssl_disconnect(cp); return (NULL);
 	}
 	ssl_disconnect(cp);
 
@@ -608,8 +567,7 @@ get_post_guid(session_t *sp, int id)
 		(void)strncpy(guid, (char *)jp->val, sizeof(guid));
 	free_json_node(node);
 	if (jp == NULL) {
-		warnx("Couldn't find post's guid");
-		return (NULL);
+		warnx("Couldn't find post's guid"); return (NULL);
 	}
 	return (guid);
 }
@@ -634,15 +592,12 @@ lookup_user(session_t *sp, const char *handle)
 	free(url);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
-		ssl_disconnect(cp);
-		return (NULL);
+		ssl_disconnect(cp); return (NULL);
 	} else if (status == -1) {
-		ssl_disconnect(cp);
-		return (NULL);
+		ssl_disconnect(cp); return (NULL);
 	} else if (status != HTTP_OK) {
 		warnx("Server replied with code %d", status);
-		ssl_disconnect(cp);
-		return (NULL);
+		ssl_disconnect(cp); return (NULL);
 	}
 	jp1 = node = new_json_node();
 	if (node == NULL) {
@@ -657,8 +612,7 @@ lookup_user(session_t *sp, const char *handle)
 	if (*p != '[') {
 		if (errno == 0)
 			warnx("Server reply not understood");
-		ssl_disconnect(cp);
-		return (NULL);
+		ssl_disconnect(cp); return (NULL);
 	}
 	if (parse_json(node, p) == NULL) {
 		ssl_disconnect(cp); free_json_node(node);
@@ -721,8 +675,7 @@ diaspora_login(const char *host, u_short port, const char *user,
 
 	rq = u = p = head = url = NULL;
 	if ((u = urlencode(user)) == NULL || (p = urlencode(pass)) == NULL) {
-		free(u); free(p);
-		return (NULL);
+		free(u); free(p); return (NULL);
 	}
 	if ((rq = strduprintf(tmpl, u, p)) == NULL) {
 		free(u); free(p); return (NULL);
@@ -732,7 +685,7 @@ diaspora_login(const char *host, u_short port, const char *user,
 		free(rq); return (NULL);
 	}
 	status = http_post(cp, "/users/sign_in", NULL, NULL, USER_AGENT,
-	    0, rq);
+	    HTTP_POST_TYPE_FORM, rq);
 	free(rq);
 	if (status >= 400) {
 		warnx("Login failed. Server replied with code %d", status);
@@ -741,13 +694,11 @@ diaspora_login(const char *host, u_short port, const char *user,
 		return (NULL);
 	for (cookie = NULL; (p = ssl_readln(cp)) != NULL && cookie == NULL;) {
 		if (strncmp(p, "Set-Cookie:", 11) == 0) {
-			puts(p);
 			for (q = p; (q = strtok(q, " ;")) != NULL; q = NULL) {
 				if (strncmp(q, "remember_user_token=", 20) != 0)
 					continue;
 				if ((cookie = strdup(q)) == NULL) {
-					warn("strdup()");
-					ssl_disconnect(cp);
+					warn("strdup()"); ssl_disconnect(cp);
 					return (NULL);
 				}
 			}
@@ -788,17 +739,23 @@ close_session(session_t *sp)
 static int
 post(session_t *sp, const char *msg, const char *aspect)
 {
-	int	   ret, status;
-	char	   *rq, *p;
+	int	   aid, ret, status;
+	char	   *rq, *p, idstr[24];
 	ssl_conn_t *cp;
-	const char tmpl[] = "{\"status_message\":{\"text\":\"%s\", "	 \
-			    "\"provider_display_name\":\"cliaspora\"},"  \
-			    "\"aspect_ids\":\"%s\"}\n\n";
+	const char tmpl[] = "{\"status_message\":{\"text\":\"%s\", "	  \
+			     "\"provider_display_name\":\"cliaspora\"},"  \
+			     "\"aspect_ids\":\"%s\"}\n\n";
 
 	errno = 0;
+	if (strcmp(aspect, "public") == 0)
+		(void)strncpy(idstr, "public", sizeof(idstr));
+	else if ((aid = get_aspect_id(sp, aspect)) == -1) {
+		warnx("Unknown aspect '%s'", aspect); return (-1);
+	} else
+		(void)snprintf(idstr, sizeof(idstr), "%d", aid);
 	if ((p = json_escape_str(msg)) == NULL)
 		return (-1);
-	if ((rq = strduprintf(tmpl, p, aspect)) == NULL) {
+	if ((rq = strduprintf(tmpl, p, idstr)) == NULL) {
 		free(p); return (-1);
 	}
 	free(p);
@@ -810,16 +767,143 @@ post(session_t *sp, const char *msg, const char *aspect)
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
 		ret = -1;
-	} else if (status != HTTP_FOUND) {
+	} else if (status == HTTP_FOUND)
+		ret = 0;
+	else if (status == -1)
+		ret = -1;
+	else {
 		warnx("Server replied with code %d", status);
 		ret = -1;
-	} else if (status == -1)
-		ret = -1;
-	else
-		ret = 0;
+	}
 	ssl_disconnect(cp);
 
 	return (ret);
+}
+
+static int
+upload(session_t *sp, const char *aspect, char * const *files)
+{
+	int	   aid, i, j, n, ret, status, id[24];
+	char	   *rq, idstr[24], lst[sizeof(id) * (20 + 3) / sizeof(int)];
+	ssl_conn_t *cp;
+	const char tmpl[] = "{\"status_message\":{\"text\":\"\","	\
+			    "\"provider_display_name\":\"cliaspora\"}," \
+			    "\"aspect_ids\":\"%s\",\"photos\":[%s]}";
+
+	errno = 0;
+	if (strcmp(aspect, "public") == 0)
+		(void)strncpy(idstr, "public", sizeof(idstr));
+	else if ((aid = get_aspect_id(sp, aspect)) == -1) {
+                warnx("Unknown aspect '%s'", aspect); return (-1);
+	} else
+		(void)snprintf(idstr, sizeof(idstr), "%d", aid);
+	for (n = 0; n < sizeof(id) / sizeof(int) && *files != NULL; files++) {
+		if ((id[n] = upload_file(sp, *files)) == -1)
+			warnx("Failed to upload image '%s'", *files);
+		else
+			n++;
+	}
+	if (n <= 0)
+		return (-1);
+	for (i = j = 0; i < n; i++) {
+		(void)snprintf(lst + j, sizeof(lst) - j,
+		    i < n - 1 ? "\"%d\"," : "\"%d\"", id[i]);
+		j = strlen(lst);
+	}
+	if ((rq = strduprintf(tmpl, idstr, lst)) == NULL)
+		return (-1);
+	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
+		free(rq); return (-1);
+	}
+	status = http_post(cp, "/status_messages", sp->cookie, NULL,
+	    USER_AGENT, HTTP_POST_TYPE_JSON, rq);
+	free(rq);
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status == HTTP_FOUND)
+		ret = 0;
+	else if (status == -1)
+		ret = -1;
+	else {
+		warnx("Server replied with code %d", status);
+		ret = -1;
+	}
+	ssl_disconnect(cp);
+	return (ret);
+}
+
+static int
+upload_file(session_t *sp, const char *file)
+{
+	int	    status, id;
+	char	    *url, *p;
+	ssl_conn_t  *cp;
+	json_node_t *node, *jp1, *jp2, *jp3;
+
+	errno = 0;
+	if ((p = strrchr(file, '/')) != NULL)
+		p++;
+	else
+		p = (char *)file;
+	if ((p = urlencode(p)) == NULL)
+		return (-1);
+	if ((url = strduprintf("/photos?photo%%5Bpending%%5D=true&" \
+	    "set_profile_image=&qqfile=%s", p)) == NULL) {
+		free(p); return (-1);
+	}
+	free(p);
+	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
+		free(url); return (-1);
+	}
+	status = http_upload(cp, url, sp->cookie, "application/json",
+	    USER_AGENT, file);
+	free(url);
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ssl_disconnect(cp); return (-1);
+	} else if (status == -1) {
+		ssl_disconnect(cp); return (-1);
+	} else if (status != HTTP_CREATED && status != HTTP_OK) {
+		warnx("Server replied with code %d", status);
+		ssl_disconnect(cp); return (-1);
+	}	
+	while ((p = ssl_readln(cp)) != NULL && *p != '{')
+		;
+	if (p == NULL) {
+		warnx("Unexpected server reply"); ssl_disconnect(cp);
+		return (-1);
+	}
+	if ((node = new_json_node()) == NULL) {
+		ssl_disconnect(cp); return (-1);
+	}
+	if (parse_json(node, p) == NULL) {
+		ssl_disconnect(cp); free_json_node(node);
+		return (-1);
+	}
+	ssl_disconnect(cp);
+	for (id = -1, jp1 = node->val; jp1 != NULL; jp1 = jp1->next) {
+		if (strcmp(jp1->var, "data") == 0) {
+			for (jp2 = jp1->val; jp2 != NULL; jp2 = jp2->next) {
+				if (strcmp(jp2->var, "photo") == 0) {
+					for (jp3 = jp2->val; jp3 != NULL;
+					    jp3 = jp3->next) {
+						if (strcmp(jp3->var, "id")
+						    == 0) {
+							id = *(int *)jp3->val;
+							break;
+						}
+					}
+					break;
+				}
+			}
+			break;
+		}
+	}
+	free_json_node(node);
+	if (id == -1)
+		warnx("Couldn't find the image ID");
+	return (id);
 }
 
 static int
@@ -848,13 +932,14 @@ comment(session_t *sp, const char *msg, int id)
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
 		ret = -1;
-	} else if (status != HTTP_CREATED) {
-		warnx("Server replied with code %d", status);
-		ret = -1;
 	} else if (status == -1)
 		ret = -1;
-	else
+	else if (status == HTTP_CREATED)
 		ret = 0;
+	else {
+		warnx("Server replied with code %d", status);
+		ret = -1;
+	}
 	ssl_disconnect(cp);
 
 	return (ret);
@@ -879,7 +964,38 @@ like(session_t *sp, int id)
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
 		ret = -1;
-	} else if (status == HTTP_CREATED)
+	} else if (status == -1)
+		ret = -1;
+	else if (status == HTTP_CREATED)
+		ret = 0;
+	else {
+		warnx("Server replied with code %d", status);
+		ret = -1;
+	}
+	ssl_disconnect(cp);
+
+	return (ret);
+}
+
+static int
+delete_post(session_t *sp, int id)
+{
+	int	   status, ret;
+	char	   *url;
+	ssl_conn_t *cp;
+	
+	errno = 0;
+	if ((url = strduprintf("/posts/%d", id)) == NULL)
+		return (-1);
+	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
+		free(url); return (-1);
+	}
+	status = http_delete(cp, url, sp->cookie, USER_AGENT);
+	free(url);
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status == HTTP_FOUND)
 		ret = 0;
 	else if (status == -1)
 		ret = -1;
@@ -914,7 +1030,7 @@ message(session_t *sp, const char *subject, const char *msg, int id)
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (-1);
 	status = http_post(cp, "/conversations", sp->cookie, NULL,
-	    USER_AGENT, 0, rq);
+	    USER_AGENT, HTTP_POST_TYPE_FORM, rq);
 	free(rq);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
@@ -948,13 +1064,13 @@ reply(session_t *sp, const char *msg, int msg_id)
 		free(p); return (-1);
 	}
 	if ((rq = strduprintf("message%%5btext%%5d=%s\n", p)) == NULL) {
-		free(p); free(url);
-		return (-1);
+		free(p); free(url); return (-1);
 	}
 	free(p);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (-1);
-	status = http_post(cp, url, sp->cookie, NULL, USER_AGENT, 0, rq);
+	status = http_post(cp, url, sp->cookie, NULL, USER_AGENT,
+	    HTTP_POST_TYPE_FORM, rq);
 	free(url); free(rq);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
@@ -1022,7 +1138,7 @@ add_aspect(session_t *sp, const char *name, bool visible)
 		free(rq); return (-1);
 	}
 	status = http_post(cp, "/aspects", sp->cookie, NULL,
-	    USER_AGENT, 0, rq);
+	    USER_AGENT, HTTP_POST_TYPE_FORM, rq);
 	free(rq);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
@@ -1061,7 +1177,7 @@ follow_tag(session_t *sp, const char *tag)
 		free(rq); return (-1);
 	}
 	status = http_post(cp, "/tag_followings", sp->cookie, NULL,
-	    USER_AGENT, 0, rq);
+	    USER_AGENT, HTTP_POST_TYPE_FORM, rq);
 	free(rq);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
@@ -1095,7 +1211,7 @@ add_contact(session_t *sp, int aspect, int id)
 		return (-1);
 	}
 	status = http_post(cp, "/aspect_memberships.json", sp->cookie, NULL,
-	    USER_AGENT, 0, rq);
+	    USER_AGENT, HTTP_POST_TYPE_FORM, rq);
 	free(rq);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
@@ -1124,11 +1240,11 @@ free_session(session_t *sp)
 static session_t *
 new_session(const char *host, u_short port, const char *user, const char *pass)
 {
+	char	  account[256];
 	session_t *sp;
 
 	if ((sp = malloc(sizeof(session_t))) == NULL) {
-		warn("malloc()");
-		return (NULL);
+		warn("malloc()"); return (NULL);
 	}
 	sp->cookie	 = sp->host = NULL;
 	sp->port	 = port;
@@ -1136,30 +1252,26 @@ new_session(const char *host, u_short port, const char *user, const char *pass)
 	sp->attr.aspects = NULL;
 
 	if ((sp->host = strdup(host)) == NULL) {
-		free_session(sp);
-		return (NULL);
+		free_session(sp); return (NULL);
 	}
 	sp->cookie = diaspora_login(host, port, user, pass);
 	if (sp->cookie == NULL)
 		return (NULL);
 	if (get_attributs(sp) == -1) {
-		free_session(sp);
-		return (NULL);
+		free_session(sp); return (NULL);
 	}
 	if ((cfg.cookie = strdup(sp->cookie)) == NULL) {
-		warn("strdup()");
-		return (NULL);
+		warn("strdup()"); return (NULL);
 	}
 	if ((cfg.host = strdup(sp->host)) == NULL) {
-		warn("strdup()");
-		return (NULL);
+		warn("strdup()"); return (NULL);
 	}
 	if ((cfg.user = strdup(user)) == NULL) {
-		warn("strdup()");
-		return (NULL);
+		warn("strdup()"); return (NULL);
 	}
 	cfg.port = port;
-	write_config();
+	(void)snprintf(account, sizeof(account), "%s@%s", user, host);
+	write_config(account);
 
 	return (sp);
 }
@@ -1188,8 +1300,7 @@ create_session()
 	sp->attr.aspects = NULL;
 
 	if (get_attributs(sp) == -1) {
-		free_session(sp);
-		return (NULL);
+		free_session(sp); return (NULL);
 	}
 	return (sp);
 }
@@ -1208,11 +1319,9 @@ get_attributs(session_t *sp)
 	status = http_get(cp, "/stream", sp->cookie, "*/*", USER_AGENT);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	} else if (status == -1) {
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	}
 	while ((p = ssl_readln(cp)) != NULL) {
 		if (strstr(p, "window.current_user_attributes") != NULL)
@@ -1235,8 +1344,7 @@ get_attributs(session_t *sp)
 	if ((jnode = new_json_node()) == NULL)
 		return (-1);
 	if (parse_json(jnode, q) == NULL) {
-		free_json_node(jnode);
-		return (-1);
+		free_json_node(jnode); return (-1);
 	}
 	ssl_disconnect(cp);
 
@@ -1407,29 +1515,22 @@ free_msg_idx(msg_idx_t *idx)
 static msg_idx_t *
 get_msg_index(session_t *sp)
 {
-	int	    urlsz, page, status;
+	int	    page, status;
 	bool	    complete, error;
-	char	    *url, *p;
 	msg_idx_t   *index, *ip;
 	const char  tmpl[] = "/conversations?page=%d";
+	char	    url[sizeof(tmpl) + 16], *p;
 	ssl_conn_t  *cp;
 	json_node_t *node, *jp1, *jp2, *jp3, *jp4;
 	errno = 0;
 
-	urlsz = strlen(tmpl) + 16;
-	if ((url = malloc(urlsz)) == NULL)
-		return (NULL);
 	jp1 = node = new_json_node();
-	if (node == NULL) {
-		free(url);
+	if (node == NULL)
 		return (NULL);
-	}
 	for (complete = error = false, page = 1; !error && !complete; page++) {
-		(void)snprintf(url, urlsz, tmpl, page);
-		if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
-			free(url);
+		(void)snprintf(url, sizeof(url), tmpl, page);
+		if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 			return (NULL);
-		}
 		status = http_get(cp, url, sp->cookie,
 		    "application/json, */*", USER_AGENT);
 		if (status == HTTP_UNAUTHORIZED) {
@@ -1456,7 +1557,6 @@ get_msg_index(session_t *sp)
 		}
 		ssl_disconnect(cp);
 	}
-	free(url);
 	if (error) {
 		free_json_node(node);
 		return (NULL);
@@ -1581,8 +1681,7 @@ get_contacts(session_t *sp)
 		return (NULL);
 	} else if (status != HTTP_OK && status != HTTP_FOUND) {
 		warnx("Server replied with code %d", status);
-		ssl_disconnect(cp);
-		return (NULL);
+		ssl_disconnect(cp); return (NULL);
 	}
 	jp1 = node = new_json_node();
 	if (node == NULL)
@@ -1596,8 +1695,7 @@ get_contacts(session_t *sp)
 		return (NULL);
 	}
 	if (parse_json(node, p) == NULL) {
-		ssl_disconnect(cp);
-		free_json_node(node);
+		ssl_disconnect(cp); free_json_node(node);
 		return (NULL);
 	}
 	ssl_disconnect(cp);
@@ -1691,8 +1789,7 @@ groff_printf(const char *fmt, ...)
 	while (*fmt != '\0') {
 		if (*fmt == '%') {
 			if (*++fmt == '\0') {
-				va_end(ap);
-				return;
+				va_end(ap); return;
 			}
 		} else {
 			putchar(*fmt++);
@@ -1853,32 +1950,26 @@ read_stream(session_t *sp, const char *url)
 	    "application/json, */*", USER_AGENT);
 	if (status == HTTP_UNAUTHORIZED) {
 		warnx("You're not logged in. Please create a new session");
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	} else if (status == -1) {
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	} else if (status != HTTP_OK) {
 		warnx("Server replied with code %d", status);
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	}
 	if ((node = new_json_node()) == NULL) {
 		warnx("new_json_node()");
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	}
 	while ((p = ssl_readln(cp)) != NULL && *p != '[')
 		;
 	if (p == NULL) {
 		warnx("Unexpected server reply");
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	}
 	if (parse_json(node, p) == NULL) {
 		warnx("parse_json() failed");
-		ssl_disconnect(cp);
-		return (-1);
+		ssl_disconnect(cp); return (-1);
 	}
 	ssl_disconnect(cp);
 	for (pstp = node->val; pstp != NULL; pstp = pstp->next)

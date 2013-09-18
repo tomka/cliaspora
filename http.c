@@ -36,6 +36,92 @@
 #include "types.h"
 #include "ssl.h"
 #include "http.h"
+#include "str.h"
+
+#define HTTP_TMPL_POST_RQ	"POST %s HTTP/1.0\r\n"
+#define HTTP_TMPL_GET_RQ	"GET %s HTTP/1.0\r\n"
+#define HTTP_TMPL_DELETE_RQ	"DELETE %s HTTP/1.0\r\n"
+#define HTTP_TMPL_COOKIE	"Cookie: %s\r\n"
+#define HTTP_TMPL_CONTENT_TYPE	"Content-Type: %s\r\n"
+#define HTTP_TMPL_CONTENT_LEN	"Content-Length: %d\r\n"
+#define HTTP_TMPL_USER_AGENT	"User-Agent: %s\r\n"
+#define HTTP_TMPL_HOST	  	"Host: %s\r\n"
+#define HTTP_TMPL_ACCEPT	"Accept: %s\r\n"
+#define HTTP_TMPL_LOCATION	"Location: %s\r\n"
+#define HTTP_TMPL_CHARSET	"Charset: %s\r\n"
+
+typedef struct http_req_s {
+	int cl;			/* Content length */
+	int type;		/* GET, POST, DELETE */
+#define HTTP_RQ_TYPE_GET    1
+#define HTTP_RQ_TYPE_POST   2
+#define HTTP_RQ_TYPE_DELETE 3
+	const char *url;
+	const char *ua;		/* User agent */
+	const char *cs;		/* Charset */
+	const char *ct;		/* Content type */
+	const char *accept;	/* Accepted document type. */
+	const char *host;
+	const char *location;
+	const char *cookie;
+} http_req_t;
+
+char *
+http_gen_req(http_req_t *r)
+{
+	int    i, lc;
+	char   *rq, *ln[16];
+	size_t rqsz;
+
+	rq = NULL; rqsz = 0; lc = 0;
+	switch (r->type) {
+	case HTTP_RQ_TYPE_GET:
+		ln[lc++] = strduprintf(HTTP_TMPL_GET_RQ, r->url);
+		ln[lc++] = strduprintf("X-Requested-With: XMLHttpRequest\r\n");
+		break;
+	case HTTP_RQ_TYPE_POST:
+		ln[lc++] = strduprintf(HTTP_TMPL_POST_RQ, r->url);
+		if (r->cl > 0)
+			ln[lc++] = strduprintf(HTTP_TMPL_CONTENT_LEN, r->cl);
+		break;
+	case HTTP_RQ_TYPE_DELETE:
+		ln[lc++] = strduprintf(HTTP_TMPL_DELETE_RQ, r->url);
+		break;
+	default:
+		warnx("http_gen_req(): Invalid request type: %d", r->type);
+		return (NULL);
+	}
+	if (r->host != NULL)
+		ln[lc++] = strduprintf(HTTP_TMPL_HOST, r->host);
+	if (r->location != NULL)
+		ln[lc++] = strduprintf(HTTP_TMPL_LOCATION, r->location);
+	if (r->cookie != NULL)
+		ln[lc++] = strduprintf(HTTP_TMPL_COOKIE, r->cookie);
+	if (r->ua != NULL)
+		ln[lc++] = strduprintf(HTTP_TMPL_USER_AGENT, r->ua);
+	if (r->cs != NULL)
+		ln[lc++] = strduprintf(HTTP_TMPL_CHARSET, r->cs);
+	else
+		ln[lc++] = strduprintf(HTTP_TMPL_CHARSET, "UTF-8");
+	if (r->ct != NULL)
+		ln[lc++] = strduprintf(HTTP_TMPL_CONTENT_TYPE, r->ct);
+	if (r->accept != NULL)
+		ln[lc++] = strduprintf(HTTP_TMPL_ACCEPT, r->accept);
+	ln[lc++] = strduprintf("Cache-Control: no-cache\r\n\r\n");
+	for (i = 0; i < lc; i++) {
+		if (ln[i] == NULL)
+			goto error;
+		if (strdupstrcat(&rq, &rqsz, ln[i], strlen(ln[i])) == NULL)
+			goto error;
+		free(ln[i]); ln[i] = NULL;
+	}
+	return (rq);
+error:
+	while (lc--)
+		free(ln[lc]);
+	free(rq);
+	return (NULL);
+}
 
 char *
 urlencode(const char *url)
@@ -49,7 +135,7 @@ urlencode(const char *url)
 	if (url == NULL)
 		return (NULL);
 	buflen = strlen(url) * 3 + 1;
-	if ((buf = realloc(buf, buflen)) == NULL)
+	if ((buf = malloc(buflen)) == NULL)
 		return (NULL);
 	for (n = 0; *url != '\0'; n++, url++) {
 		if (strchr(nores, (int)*url) == NULL) {
@@ -85,128 +171,140 @@ int
 http_get(ssl_conn_t *cp, const char *url, const char *cookie,
 	 const char *accept, const char *agent)
 {
-	int  len, n;
-	char *rq;
+	char	   *rq;
+	http_req_t hdr;
 
-	if (url == NULL) {
-		warnx("http_get(): url == NULL");
+	(void)memset(&hdr, 0, sizeof(hdr));
+	hdr.ua       = agent;
+	hdr.url	     = url;
+	hdr.type     = HTTP_RQ_TYPE_GET;
+	hdr.host     = cp->host;
+	hdr.cookie   = cookie;
+	hdr.accept   = accept;
+	hdr.location = url; 
+
+	if ((rq = http_gen_req(&hdr)) == NULL)
 		return (-1);
-	}
-	len = 2 * strlen(url);
-	if (cookie != NULL)
-		len += strlen(cookie);
-	if (accept != NULL)
-		len += strlen(accept);
-	if (agent != NULL)
-		len += strlen(agent);
-	len += strlen(cp->host);
 
-	len += strlen("GET   HTTP/1.0xxCookie: xxAccept: xx" \
-		      "User-Agent: xxHost: xxLocation: xxxx") + 32;
-	len += strlen("Accept-Charset: utf-8xx");
-	len += strlen("X-Requested-With: XMLHttpRequestxx");
-
-	if ((rq = malloc(len)) == NULL) {
-		warn("malloc()");
-		return (-1);
-	}
-	(void)snprintf(rq, len, "GET %s HTTP/1.0\r\n", url);
-	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "Location: %s\r\n", url);
-	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "Host: %s\r\n", cp->host);
-	n = strlen(rq);
-
-	if (cookie != NULL) {
-		(void)snprintf(rq + n, len - n, "Cookie: %s\r\n", cookie);
-		n = strlen(rq);
-	}
-	if (accept != NULL) {
-		(void)snprintf(rq + n, len - n, "Accept: %s\r\n", accept);
-		n = strlen(rq);
-	}
-	if (agent != NULL) {
-		(void)snprintf(rq + n, len - n, "User-Agent: %s\r\n", agent);
-		n = strlen(rq);
-	}
-	(void)snprintf(rq + n, len - n, "Accept-Charset: utf-8\r\n" \
-	    "X-Requested-With: XMLHttpRequest\r\n");
-	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "\r\n");
 	if (ssl_write(cp, rq, strlen(rq)) == -1) {
-		free(rq);
-		return (-1);
+		free(rq); return (-1);
 	}
 	free(rq);
-
 	return (get_http_status(cp));
 }
 
 int
 http_post(ssl_conn_t *cp, const char *url, const char *cookie,
-	 const char *accept, const char *agent, int type, const char *request)
+	 const char *accept, const char *agent, int type, const char *content)
 {
-	int  len, n;
-	char *rq, *ct;
+	char	   *rq;
+	http_req_t hdr;
 
-	if (url == NULL) {
-		warnx("http_get(): url == NULL");
-		return (-1);
-	}
-	len = 2 * strlen(url);
-	if (request != NULL)
-		len += strlen(request);
-	if (cookie != NULL)
-		len += strlen(cookie);
-	if (accept != NULL)
-		len += strlen(accept);
-	if (agent != NULL)
-		len += strlen(agent);
-	len += strlen(cp->host);
+	(void)memset(&hdr, 0, sizeof(hdr));
+	hdr.url      = url;
+	hdr.ua       = agent;
+	hdr.host     = cp->host;
+	hdr.type     = HTTP_RQ_TYPE_POST;
+	hdr.cookie   = cookie;
+	hdr.accept   = accept;
+	hdr.location = url;
 
 	if (type == HTTP_POST_TYPE_JSON)
-		ct = "Content-Type: application/json; charset=UTF-8\r\n";
+		hdr.ct = "application/json; charset=UTF-8";
+	else if (type == HTTP_POST_TYPE_OCTET)
+		hdr.ct = "application/octet-stream";
 	else {
-		ct = "Content-type: application/x-www-form-" \
-			      "urlencoded;charset=utf-8\r\n";
+		hdr.ct = "application/x-www-form-" \
+			 "urlencoded;charset=utf-8";
 	}
-	len += strlen(ct);
-	len += strlen("POST   HTTP/1.0xxCookie: xxAccept: xxUser-Agent: xxxx");
-	len += strlen("Content-Length: 1234567890xxHost: xxLocation: xx") + 32;
-	if ((rq = malloc(len)) == NULL) {
-		warn("malloc()");
+	if (content != NULL)
+		hdr.cl = strlen(content);
+	if ((rq = http_gen_req(&hdr)) == NULL)
 		return (-1);
-	}
-	(void)snprintf(rq, len, "POST %s HTTP/1.0\r\n", url);
-	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "Host: %s\r\n", cp->host);
-	n = strlen(rq);
-	(void)snprintf(rq + n, len - n, "Location: %s\r\n", url);
-	n = strlen(rq);
-	if (cookie != NULL) {
-		(void)snprintf(rq + n, len - n, "Cookie: %s\r\n", cookie);
-		n = strlen(rq);
-	}
-	if (accept != NULL) {
-		(void)snprintf(rq + n, len - n, "Accept: %s\r\n", accept);
-		n = strlen(rq);
-	}
-	if (agent != NULL) {
-		(void)snprintf(rq + n, len - n, "User-Agent: %s\r\n", agent);
-		n = strlen(rq);
-	}
-	if (request != NULL) {
-		(void)snprintf(rq + n, len - n, "Content-Length: %d\r\n%s",
-		    (int)strlen(request), ct);
-		n = strlen(rq);
-		(void)snprintf(rq + n, len - n, "\r\n%s", request);
-	} else
-		(void)snprintf(rq + n, len - n, "\r\n");
 	if (ssl_write(cp, rq, strlen(rq)) == -1) {
-		free(rq);
-		return (-1);
+		free(rq); return (-1);
 	}
 	free(rq);
+	if (content != NULL) {
+		if (ssl_write(cp, content, hdr.cl) == -1)
+			return (-1);
+	}
+	return (get_http_status(cp));
+}
+
+int
+http_delete(ssl_conn_t *cp, const char *url, const char *cookie,
+	    const char *agent)
+{
+	char	   *rq;
+	http_req_t hdr;
+
+	(void)memset(&hdr, 0, sizeof(hdr));
+	hdr.url	     = url;
+	hdr.cookie   = cookie;
+	hdr.ua	     = agent;
+	hdr.type     = HTTP_RQ_TYPE_DELETE;
+	hdr.host     = cp->host;
+	hdr.location = url;
+
+	if ((rq = http_gen_req(&hdr)) == NULL)
+		return (-1);
+	if (ssl_write(cp, rq, strlen(rq)) == -1) {
+		free(rq); return (-1);
+	}
+	free(rq);
+	return (get_http_status(cp));
+}
+
+int
+http_upload(ssl_conn_t *cp, const char *url, const char *cookie,
+	    const char *accept, const char *agent, const char *file)
+{
+	int	   n;
+	long	   len;
+	FILE	   *fp;
+	char	   *rq, buf[1024];
+	http_req_t hdr;
+
+	if ((fp = fopen(file, "r")) == NULL) {
+		warn("%s", file); return (-1);
+	}
+	if (fseek(fp, 0, SEEK_END) == -1) {
+		warn("fseek()"); (void)fclose(fp); return (-1);
+	}
+	if ((len = ftell(fp)) == -1) {
+		warn("ftell()"); (void)fclose(fp); return (-1);
+	}
+	if (len > HTTP_FILESZ_LIMIT) {
+		warnx("'%s' exceeds file size-limit of %d MB", file,
+		    HTTP_FILESZ_LIMIT / (1024 * 1024));
+		(void)fclose(fp); return (-1);
+	}
+	(void)memset(&hdr, 0, sizeof(hdr));
+	hdr.ua	   = agent;
+	hdr.cl	   = (int)len;
+	hdr.ct	   = "application/octet-stream";
+	hdr.url	   = url;
+	hdr.type   = HTTP_RQ_TYPE_POST;
+	hdr.host   = cp->host;
+	hdr.cookie = cookie;
+	hdr.accept = accept;
+
+	if ((rq = http_gen_req(&hdr)) == NULL) {
+		(void)fclose(fp); return (-1);
+	}
+	if (ssl_write(cp, rq, strlen(rq)) == -1) {
+		free(rq); (void)fclose(fp); return (-1);
+	}
+	free(rq);
+
+	rewind(fp);
+	while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
+		if (ssl_write(cp, buf, n) == -1) {
+			(void)fclose(fp); return (-1);
+		}
+	}
+	(void)fclose(fp);
 
 	return (get_http_status(cp));
 }

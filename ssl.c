@@ -26,8 +26,8 @@
 # define _GNU_SOURCE
 #endif
 
-#include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -168,7 +168,7 @@ ssl_read(ssl_conn_t *cp, int waitsecs, void *buf, int size)
 }
 
 int
-ssl_write(ssl_conn_t *cp, void *buf, size_t size)
+ssl_write(ssl_conn_t *cp, const void *buf, size_t size)
 {
 	int n;
 

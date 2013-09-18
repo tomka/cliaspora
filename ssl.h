@@ -47,7 +47,7 @@ typedef struct ssl_conn_s {
 } ssl_conn_t;
 
 extern int	   ssl_read(ssl_conn_t *, int, void *, int); //size_t);
-extern int	   ssl_write(ssl_conn_t *, void *, size_t);
+extern int	   ssl_write(ssl_conn_t *, const void *, size_t);
 extern char	  *ssl_readln(ssl_conn_t *);
 extern void	   ssl_disconnect(ssl_conn_t *);
 extern ssl_conn_t *ssl_connect(const char *, u_short);

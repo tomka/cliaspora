@@ -39,8 +39,8 @@ typedef struct config_s {
 } config_t;
 
 extern config_t cfg;
-extern int  read_config(void);
-extern int  write_config(void);
+extern int  read_config(const char *);
+extern int  write_config(const char *);
 extern char *cfgpath(void);
 
 #endif	/* !_CONFIG_H_ */
