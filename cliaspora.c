@@ -665,47 +665,101 @@ static char *
 diaspora_login(const char *host, u_short port, const char *user,
 	       const char *pass)
 {
-	int	   status;
-	char	   *cookie, *rq, *p, *q, *u, *head, *url;
+	int	   status, tries;
+	char	   *cookie, *scookie, *rq, *p, *q, *u, *head, *url, *atok;
 	ssl_conn_t *cp;
 	const char tmpl[] = "utf8=%%E2%%9C%%93&user%%5Busername%%5D=%s&"  \
                             "user%%5Bpassword%%5D=%s&user%%5Bremember_me" \
-			    "%%5D=1&commit=Sign+in";
+			    "%%5D=1&commit=Sign+in&authenticity_token=%s";
+
 	errno = 0;
+	if ((cp = ssl_connect(host, port)) == NULL) {
+		return (NULL);
+	}
+	status = http_get(cp, "/users/sign_in", NULL, "*/*", USER_AGENT);
+	if (status != 200) {
+		warnx("Login failed. Server replied with code %d", status);
+		return (NULL);
+	}
+	scookie = atok = NULL;
+	while ((p = ssl_readln(cp)) != NULL && atok == NULL) {
+		if (strncmp(p, "Set-Cookie:", 11) == 0) {
+			for (q = p; (q = strtok(q, " ;")) != NULL; q = NULL) {
+				if (strncmp(q, "_diaspora_session=", 18) != 0)
+					continue;
+				if ((scookie = strdup(q)) == NULL) {
+					warn("strdup()"); ssl_disconnect(cp);
+					return (NULL);
+				}
+			}
+		} else if ((q = strstr(p, "name=\"authenticity_token\"")) !=
+		    NULL) {
+			if ((p = strstr(q, "value=")) != NULL) {
+				while (*p != '\0' && *p != '=')
+					p++;
+				if (*p == '=')
+					p++;
+				if (*p == '"')
+					p++;
+				for (q = p; *q != '\0' && *q != '"'; q++)
+					;
+				*q = '\0';
+				atok = strdup(p);
+			}
+		}
+	}
+	ssl_disconnect(cp);
+	if (atok == NULL)
+		warnx("Couldn't get authenticity token");
+	if (scookie == NULL)
+		warnx("Couldn't get session cookie");
 
 	rq = u = p = head = url = NULL;
 	if ((u = urlencode(user)) == NULL || (p = urlencode(pass)) == NULL) {
 		free(u); free(p); return (NULL);
 	}
-	if ((rq = strduprintf(tmpl, u, p)) == NULL) {
+	if ((rq = strduprintf(tmpl, u, p, atok == NULL ? "" : atok)) == NULL) {
 		free(u); free(p); return (NULL);
 	}
 	free(u); free(p);
-	if ((cp = ssl_connect(host, port)) == NULL) {
-		free(rq); return (NULL);
-	}
-	status = http_post(cp, "/users/sign_in", NULL, NULL, USER_AGENT,
-	    HTTP_POST_TYPE_FORM, rq);
-	free(rq);
-	if (status >= 400) {
-		warnx("Login failed. Server replied with code %d", status);
-		return (NULL);
-	} else if (status == -1)
-		return (NULL);
-	for (cookie = NULL; (p = ssl_readln(cp)) != NULL && cookie == NULL;) {
-		if (strncmp(p, "Set-Cookie:", 11) == 0) {
-			for (q = p; (q = strtok(q, " ;")) != NULL; q = NULL) {
-				if (strncmp(q, "remember_user_token=", 20) != 0)
-					continue;
-				if ((cookie = strdup(q)) == NULL) {
-					warn("strdup()"); ssl_disconnect(cp);
-					return (NULL);
+
+	tries = 0;
+	do {
+		if (tries > 0)
+			sleep(2);
+		if ((cp = ssl_connect(host, port)) == NULL) {
+			free(rq); return (NULL);
+		}
+		status = http_post(cp, "/users/sign_in", scookie, "*/*",
+		    USER_AGENT, HTTP_POST_TYPE_FORM, rq);
+		if (status >= 400) {
+			warnx("Login failed. Server replied with code %d",
+			    status);
+			return (NULL);
+		} else if (status == -1)
+			return (NULL);
+		for (cookie = NULL;
+		    (p = ssl_readln(cp)) != NULL && cookie == NULL;) {
+			if (strncmp(p, "Set-Cookie:", 11) == 0) {
+				for (q = p; (q = strtok(q, " ;")) != NULL;
+				    q = NULL) {
+					if (strncmp(q,
+					    "remember_user_token=", 20) != 0)
+						continue;
+					if ((cookie = strdup(q)) == NULL) {
+						warn("strdup()");
+						ssl_disconnect(cp);
+						return (NULL);
+					}
 				}
 			}
 		}
-	}
-	ssl_disconnect(cp);
-	if (p == NULL) {
+		ssl_disconnect(cp);
+	} while (cookie == NULL && ++tries < 10);
+
+	free(rq); free(scookie); free(atok);
+
+	if (cookie == NULL) {
 		if (errno == 0)
 			warnx("Login failed.");
 		return (NULL);
@@ -718,14 +772,16 @@ close_session(session_t *sp)
 {
 	int	   status, ret;
 	ssl_conn_t *cp;
+	const char *tmpl = "_method=delete";
 
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL)
 		return (-1);
-	status = http_get(cp, "/users/sign_out", sp->cookie, "*/*",
-	    USER_AGENT);
+	status = http_post(cp, "/users/sign_out", sp->cookie, "*/*",
+	    USER_AGENT, HTTP_POST_TYPE_FORM, tmpl);
+
 	if (status == -1)
 		ret = -1;
-	else if (status == HTTP_FOUND)
+	else if (status == HTTP_FOUND || status < 300)
 		ret = 0;
 	else {
 		warnx("Server replied with code %d", status);
@@ -1308,7 +1364,7 @@ create_session()
 static int
 get_attributs(session_t *sp)
 {
-	int	    status;
+	int	    status, n;
 	char	    *p, *q;
 	ssl_conn_t  *cp;	
 	json_node_t *jnode, *jp;
@@ -1324,23 +1380,29 @@ get_attributs(session_t *sp)
 		ssl_disconnect(cp); return (-1);
 	}
 	while ((p = ssl_readln(cp)) != NULL) {
-		if (strstr(p, "window.current_user_attributes") != NULL)
+		if ((q = strstr(p, "gon.user")) != NULL ||
+		    (q = strstr(p, "window.current_user_attributes")) != NULL)
 			break;
 	}
-	if (p == NULL) {
+	if (q == NULL) {
 		warnx("Unexpected server reply"); ssl_disconnect(cp);
 		return (-1);
 	}
+	p = q;
 	if ((q = strchr(p, '=')) != NULL) {
 		while (*q != '\0' && *q != '{')
 			q++;
 	}
-	if ((p = strstr(q, "</script>")) != NULL) {
-		while (p != q && *p != '}')
-			p--;
-		if (p != q)
-			*p = '\0';
-	}
+	n = 0; p = q;
+	do {
+		if (*p == '{')
+			n++;
+		else if (*p == '}')
+			n--;
+		p++;
+	} while (n > 0);
+	*p = '\0';
+
 	if ((jnode = new_json_node()) == NULL)
 		return (-1);
 	if (parse_json(jnode, q) == NULL) {

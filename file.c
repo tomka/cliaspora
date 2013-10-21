@@ -173,7 +173,7 @@ edit_file(char *path)
 		}
 	} else
 		editor = cfg.editor;
-	if ((cmd = malloc(strlen(editor) + sizeof(tmp_path) + 2)) == NULL) {
+	if ((cmd = malloc(strlen(editor) + strlen(path) + 4)) == NULL) {
 		warn("malloc()"); return (NULL);
 	}
 	(void)sprintf(cmd, "%s %s", editor, path);

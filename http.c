@@ -185,7 +185,6 @@ http_get(ssl_conn_t *cp, const char *url, const char *cookie,
 
 	if ((rq = http_gen_req(&hdr)) == NULL)
 		return (-1);
-
 	if (ssl_write(cp, rq, strlen(rq)) == -1) {
 		free(rq); return (-1);
 	}
