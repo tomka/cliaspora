@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2013 Marcel Kaiser. All rights reserved.
+ * Copyright (c) 2014 Marcel Kaiser. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -117,7 +117,7 @@ typedef struct post_s {
 	char *root_handle;
 } post_t;
 
-static int	 upload(session_t *, const char *, char * const *);
+static int	 upload(session_t *, const char *, const char *, char * const *);
 static int	 upload_file(session_t *, const char *);
 static int	 close_session(session_t *);
 static int	 read_stream(session_t *, const char *);
@@ -162,7 +162,7 @@ static contact_t *find_contact_by_id(contact_t *, int);
 int
 main(int argc, char *argv[])
 {
-	int	  ch, eflag, aspect_id, user_id, pm_id; 
+	int	  ch, eflag, mflag, aspect_id, user_id, pm_id; 
 	bool	  public, have_cfg;
 	char	  *account, *host, *user, *pass, *buf, url[256];
 	session_t *sp;
@@ -176,14 +176,17 @@ main(int argc, char *argv[])
 		warnx("Expect messed up output");
 	}
 
-	eflag = 0; account = NULL;
-	while ((ch = getopt(argc, argv, "a:eh")) != -1) {
+	eflag = mflag = 0; account = NULL;
+	while ((ch = getopt(argc, argv, "a:emh")) != -1) {
 		switch (ch) {
 		case 'a':
 			account = optarg;
 			break;
 		case 'e':
 			eflag = 1;
+			break;
+		case 'm':
+			mflag = 1;
 			break;
 		case 'h':
 		case '?':
@@ -313,8 +316,12 @@ main(int argc, char *argv[])
 		    get_aspect_id(sp, argv[1]) == -1) {
 			errx(EXIT_FAILURE, "Unknown aspect '%s'", argv[1]);
 		}
-		if (upload(sp, argv[1], &argv[2]) == -1)
+		if (mflag == 1)
+			buf = get_input(eflag == 1 ? false : true);
+		if (upload(sp, argv[1], mflag ? buf : NULL, &argv[2]) == -1)
 			errx(EXIT_FAILURE, "Failed to upload file(s).");
+		if (mflag == 1 && eflag == 1)
+			delete_postponed();
 	} else if (strcmp(argv[0], "reshare") == 0) {
 		if (argc < 2)
 			usage();
@@ -454,7 +461,8 @@ usage()
 	    "       cliaspora [-a account] show activity\n"		      \
 	    "       cliaspora [-a account] show mystream\n"		      \
 	    "       cliaspora [-a account] status\n"			      \
-	    "       cliaspora [-a account] upload <aspect> <file> ...\n"      \
+	    "       cliaspora [-a account][-m [-e]] upload <aspect> "	      \
+	    "<file> ...\n" \
 	    "       cliaspora [-a account][-e] comment <post-ID>\n"	      \
 	    "       cliaspora [-a account][-e] message <handle> [subject]\n"  \
 	    "       cliaspora [-a account][-e] post <aspect>\n"		      \
@@ -837,12 +845,12 @@ post(session_t *sp, const char *msg, const char *aspect)
 }
 
 static int
-upload(session_t *sp, const char *aspect, char * const *files)
+upload(session_t *sp, const char *aspect, const char *msg, char * const *files)
 {
 	int	   aid, i, j, n, ret, status, id[24];
-	char	   *rq, idstr[24], lst[sizeof(id) * (20 + 3) / sizeof(int)];
+	char	   *rq, *p, idstr[24], lst[sizeof(id) * (20 + 3) / sizeof(int)];
 	ssl_conn_t *cp;
-	const char tmpl[] = "{\"status_message\":{\"text\":\"\","	\
+	const char tmpl[] = "{\"status_message\":{\"text\":\"%s\","	\
 			    "\"provider_display_name\":\"cliaspora\"}," \
 			    "\"aspect_ids\":\"%s\",\"photos\":[%s]}";
 
@@ -866,7 +874,12 @@ upload(session_t *sp, const char *aspect, char * const *files)
 		    i < n - 1 ? "\"%d\"," : "\"%d\"", id[i]);
 		j = strlen(lst);
 	}
-	if ((rq = strduprintf(tmpl, idstr, lst)) == NULL)
+	if (msg != NULL) {
+		if ((p = json_escape_str(msg)) == NULL)
+			return (-1);
+	} else
+		p = "";
+	if ((rq = strduprintf(tmpl, p, idstr, lst)) == NULL)
 		return (-1);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
 		free(rq); return (-1);

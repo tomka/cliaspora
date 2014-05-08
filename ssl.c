@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2013 Marcel Kaiser. All rights reserved.
+ * Copyright (c) 2014 Marcel Kaiser. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -131,7 +131,7 @@ ssl_disconnect(ssl_conn_t *cp)
 int
 ssl_read(ssl_conn_t *cp, int waitsecs, void *buf, int size)
 {
-	int	       n;
+	int	       n, ec;
 	fd_set         rset;
 	struct timeval tv;
 	
@@ -144,22 +144,36 @@ ssl_read(ssl_conn_t *cp, int waitsecs, void *buf, int size)
 		}
 		return (n);
 	}
-	tv.tv_sec = waitsecs; tv.tv_usec = 0;
-	FD_ZERO(&rset); FD_SET(cp->sock, &rset);
-	while (select(cp->sock + 1, &rset, NULL, NULL, &tv) == -1) {
-		if (errno != EINTR) {
-			warn("ssl_read(): select()");
-			return (-1);
+	for (n = -1; n < 0;) {
+		tv.tv_sec = waitsecs; tv.tv_usec = 0;
+		FD_ZERO(&rset); FD_SET(cp->sock, &rset);
+		while (select(cp->sock + 1, &rset, NULL, NULL, &tv) == -1) {
+			if (errno != EINTR) {
+				warn("ssl_read(): select()");
+				return (-1);
+			}
 		}
-	}
-	if (!FD_ISSET(cp->sock, &rset)) {
-		warnx("ssl_read(): Timeout");
-		return (TIMEOUT);
-	} 
-	while ((n = SSL_read(cp->handle, buf, size)) == -1) {
-		if (errno != EINTR) {
-			ERR_print_errors_fp(stderr);
-			return (-1);
+		if (!FD_ISSET(cp->sock, &rset)) {
+			warnx("ssl_read(): Timeout");
+			return (TIMEOUT);
+		} 
+		if ((n = SSL_read(cp->handle, buf, size)) < 0) {
+			switch ((ec = SSL_get_error(cp->handle, n))) {
+			case SSL_ERROR_WANT_READ:
+			case SSL_ERROR_WANT_WRITE:
+				/* FALLTHROUGH */
+				break;
+			default:
+				if (errno != 0) {
+					warn("SSL_read() returned with %d," \
+					     "SSL-error code %d", n, ec);
+				} else {
+					warnx("SSL_read() returned with %d," \
+					      "SSL-error code %d", n, ec);
+				}
+				ERR_print_errors_fp(stderr);
+				return (-1);
+			}
 		}
 	}
 	if (n == 0)
@@ -170,12 +184,44 @@ ssl_read(ssl_conn_t *cp, int waitsecs, void *buf, int size)
 int
 ssl_write(ssl_conn_t *cp, const void *buf, size_t size)
 {
-	int n;
+	int	       n, ec;
+	fd_set	       wset;
+	struct timeval tv;
 
-	while ((n = SSL_write(cp->handle, buf, size)) == -1) {
-		if (errno != EINTR)
-			return (-1);
+	for (n = -1; n < 0;) {
+		tv.tv_sec = 20; tv.tv_usec = 0;
+		FD_ZERO(&wset); FD_SET(cp->sock, &wset);
+		while (select(cp->sock + 1, NULL, &wset, NULL, &tv) == -1) {
+			if (errno != EINTR) {
+				warn("ssl_write(): select()");
+				return (-1);
+			}
+		}
+		if (!FD_ISSET(cp->sock, &wset)) {
+			warnx("ssl_write(): Timeout");
+			return (TIMEOUT);
+		}
+		if ((n = SSL_write(cp->handle, buf, size)) < 0) {
+			switch ((ec = SSL_get_error(cp->handle, n))) {
+			case SSL_ERROR_WANT_READ:
+			case SSL_ERROR_WANT_WRITE:
+				/* FALLTHROUGH */
+				break;
+			default:
+				if (errno != 0) {
+					warn("SSL_write() returned with %d," \
+					     "SSL-error code %d", n, ec);
+				} else {
+					warnx("SSL_write() returned with %d," \
+					      "SSL-error code %d", n, ec);
+				}
+				ERR_print_errors_fp(stderr);
+				return (-1);
+			}
+		}
 	}
+	if (n == 0)
+		cp->state = SSL_STATE_DISCONNECTED;
 	return (n);
 }
 

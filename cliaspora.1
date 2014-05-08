@@ -1,4 +1,4 @@
-.TH cliaspora 1 "2013" "version 0.1.6" "cliaspora"
+.TH cliaspora 1 "2013" "version 0.1.8" "cliaspora"
 .SH NAME
 .B cliaspora
 \(em A command-line client for DIASPORA*
@@ -21,7 +21,7 @@
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBshow\fP \fBactivity\fP
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBshow\fP \fBmystream\fP
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBstatus\fP
-\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBupload\fP \fIaspect\fP \fIfile ...\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-m\fP [\fB-e\fP]]\fB upload\fP \fIaspect\fP \fIfile ...\fP
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBcomment\fP \fIpost-ID\fP
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBmessage\fP \fIhandle\fP [\fIsubject\fP]
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBpost\fP \fIaspect\fP
@@ -43,9 +43,12 @@ Use the given \fIaccount\fP, where \fIaccount\fP is a DIASPORA handle.
 .TP
 .B -e
 Use the editor defined by the \fIeditor\fP variable in $HOME/.cliasporarc or
-the environment variable EDITOR to compose your message, reply, post, or
-comment. If the \fB-e\fP option was not specified, \fBcliaspora\fP reads
-input from stdin.
+the environment variable EDITOR to compose your message, reply, post,
+upload text, or comment. If the \fB-e\fP option was not specified,
+\fBcliaspora\fP reads input from stdin.
+.TP
+.B -m
+Post text along with image upload. See the \fBupload\fP command below.
 .SH COMMANDS
 .TP
 .B add aspect
@@ -102,7 +105,10 @@ piped into \(cqpreconv | groff -Tutf8\(cq.
 Shows the number of new notifications and new messages.
 .TP
 .B upload
-Uploads one or more image files to the given \fIaspect\fP.
+Uploads one or more image files to the given \fIaspect\fP. If the \fB-m\fP
+option was specified, \fBcliaspora\fP lets you post a text along with the
+images. If the \fB-e\fP option was not specified, \fBcliaspora\fP reads the
+text from stdin.
 .SH CONFIG FILE
 \fBcliaspora\fP stores session related information in the configuration file
 $HOME/.cliasporarc, which is a newline separated list of
@@ -120,8 +126,8 @@ all accounts, but can be redefined in each account block.
 .SS USER SETTABLE VARIABLES
 .TP
 .B editor
-Defines an editor for the \fBcomment\fP, \fBmessage\fP, \fBpost\fP, and
-\fBreply\fP commands.
+Defines an editor for the \fBcomment\fP, \fBmessage\fP, \fBpost\fP,
+\fBupload\fP and \fBreply\fP command.
 .SH FILES
 .nf
 $HOME/.cliasporarc
@@ -129,6 +135,7 @@ $HOME/.cliaspora.postponed
 .fi
 .SH BUGS
 Searching for certain users or handles using the \fBlookup\fP command fails.
+Creating a new session sometimes fails, albeit the password is correct.
 .SH AUTHOR
 .PD 0
 Marcel Kaiser <mk@nic-nac-project.org>
