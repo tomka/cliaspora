@@ -1,4 +1,4 @@
-.TH cliaspora 1 "2013" "version 0.1.8" "cliaspora"
+.TH cliaspora 1 "2014" "version 0.1.9" "cliaspora"
 .SH NAME
 .B cliaspora
 \(em A command-line client for DIASPORA*
@@ -21,7 +21,8 @@
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBshow\fP \fBactivity\fP
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBshow\fP \fBmystream\fP
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] \fBstatus\fP
-\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-m\fP [\fB-e\fP]]\fB upload\fP \fIaspect\fP \fIfile ...\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-m\fP [\fB-e\fP]] \fBupload\fP \fIaspect\fP \fIfile ...\fP
+\fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-m\fP [\fB-e\fP]] \fBpoll\fP \fIaspect\fP \fIquestion\fP \fIoption1\fP \fIoption2 ...\fP
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBcomment\fP \fIpost-ID\fP
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBmessage\fP \fIhandle\fP [\fIsubject\fP]
 \fBcliaspora\fP [\fB-a\fP \fIaccount\fP] [\fB-e\fP] \fBpost\fP \fIaspect\fP
@@ -44,11 +45,12 @@ Use the given \fIaccount\fP, where \fIaccount\fP is a DIASPORA handle.
 .B -e
 Use the editor defined by the \fIeditor\fP variable in $HOME/.cliasporarc or
 the environment variable EDITOR to compose your message, reply, post,
-upload text, or comment. If the \fB-e\fP option was not specified,
+upload text, poll text or comment. If the \fB-e\fP option was not specified,
 \fBcliaspora\fP reads input from stdin.
 .TP
 .B -m
-Post text along with image upload. See the \fBupload\fP command below.
+Allows you to post text along with an image upload or a poll. See the
+\fBupload\fP and the \fBpoll\fP command below.
 .SH COMMANDS
 .TP
 .B add aspect
@@ -109,6 +111,12 @@ Uploads one or more image files to the given \fIaspect\fP. If the \fB-m\fP
 option was specified, \fBcliaspora\fP lets you post a text along with the
 images. If the \fB-e\fP option was not specified, \fBcliaspora\fP reads the
 text from stdin.
+.TP
+.B poll
+Starts a poll regarding the given \fIquestion\fP. At least two options people
+can choose from must be defined. If the \fB-m\fP option was specified,
+\fBcliaspora\fP lets you post a text along with the poll. If the \fB-e\fP
+option was not specified, \fBcliaspora\fP reads the text from stdin.
 .SH CONFIG FILE
 \fBcliaspora\fP stores session related information in the configuration file
 $HOME/.cliasporarc, which is a newline separated list of

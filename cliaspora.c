@@ -124,6 +124,8 @@ static int	 read_stream(session_t *, const char *);
 static int	 get_aspect_id(session_t *, const char *);
 static int	 get_contact_id(contact_t *, const char *);
 static int	 get_pm_id(session_t *, const char *);
+static int	 dpoll(session_t *, const char *, const char *, const char *,
+		       const char *);
 static int	 post(session_t *, const char *, const char *);
 static int	 like(session_t *, int);
 static int	 delete_post(session_t *, int);
@@ -162,9 +164,9 @@ static contact_t *find_contact_by_id(contact_t *, int);
 int
 main(int argc, char *argv[])
 {
-	int	  ch, eflag, mflag, aspect_id, user_id, pm_id; 
+	int	  ch, eflag, mflag, i, len, aspect_id, user_id, pm_id; 
 	bool	  public, have_cfg;
-	char	  *account, *host, *user, *pass, *buf, url[256];
+	char	  *account, *host, *user, *pass, *p, *ans, *buf, url[256];
 	session_t *sp;
 	contact_t *contacts;
 
@@ -322,6 +324,30 @@ main(int argc, char *argv[])
 			errx(EXIT_FAILURE, "Failed to upload file(s).");
 		if (mflag == 1 && eflag == 1)
 			delete_postponed();
+	} else if (strcmp(argv[0], "poll") == 0) {
+		if (argc < 5)
+			usage();
+		if ((sp = create_session()) == NULL)
+			errx(EXIT_FAILURE, "Failed to create session.");
+		for (ans = NULL, len = 0, i = 3; i < argc; i++) {
+			if ((p = json_escape_str(argv[i])) == NULL)
+				err(EXIT_FAILURE, "json_escape_str()");
+			len += strlen(p) + 4;
+			if ((ans = realloc(ans, len)) == NULL)
+				err(EXIT_FAILURE, "realloc()");
+			if (i == 3)
+				/* First iteration. Initialize 'ans' */
+				*ans = '\0';
+			(void)sprintf(ans + strlen(ans), "\"%s\"%s", p,
+			    argc - 1 > i ? "," : "");
+			free(p);
+		}
+		if (mflag == 1)
+			buf = get_input(eflag == 1 ? false : true);
+		if (dpoll(sp, argv[1], mflag ? buf : NULL, argv[2], ans) == -1)
+			errx(EXIT_FAILURE, "Failed to start poll.");
+		if (mflag == 1 && eflag == 1)
+			delete_postponed();
 	} else if (strcmp(argv[0], "reshare") == 0) {
 		if (argc < 2)
 			usage();
@@ -462,7 +488,9 @@ usage()
 	    "       cliaspora [-a account] show mystream\n"		      \
 	    "       cliaspora [-a account] status\n"			      \
 	    "       cliaspora [-a account][-m [-e]] upload <aspect> "	      \
-	    "<file> ...\n" \
+	    "<file> ...\n" 						      \
+	    "       cliaspora [-a account][-m [-e]] poll <aspect> <question> "\
+	    "<option 1> <option 2> ...\n"	      			      \
 	    "       cliaspora [-a account][-e] comment <post-ID>\n"	      \
 	    "       cliaspora [-a account][-e] message <handle> [subject]\n"  \
 	    "       cliaspora [-a account][-e] post <aspect>\n"		      \
@@ -845,6 +873,58 @@ post(session_t *sp, const char *msg, const char *aspect)
 }
 
 static int
+dpoll(session_t *sp, const char *aspect, const char *msg, const char *question,
+	const char *ansl)
+{
+	int	   aid, ret, status;
+	char	   *rq, *mp, *qp, idstr[24];
+	ssl_conn_t *cp;
+	const char tmpl[] = "{\"status_message\":{\"text\":\"%s\","	      \
+			    "\"provider_display_name\":\"cliaspora\"},"	      \
+			    "\"aspect_ids\":\"%s\",\"poll_question\":\"%s\"," \
+			    "\"poll_answers\":[%s]}";
+
+	errno = 0;
+	if (strcmp(aspect, "public") == 0)
+		(void)strncpy(idstr, "public", sizeof(idstr));
+	else if ((aid = get_aspect_id(sp, aspect)) == -1) {
+                warnx("Unknown aspect '%s'", aspect); return (-1);
+	} else
+		(void)snprintf(idstr, sizeof(idstr), "%d", aid);
+	if (msg != NULL) {
+		if ((mp = json_escape_str(msg)) == NULL)
+			return (-1);
+	} else
+		mp = NULL;
+	if ((qp = json_escape_str(question)) == NULL) {
+		free(mp); return (-1);
+	}
+	rq = strduprintf(tmpl, msg != NULL ? mp : "", idstr, qp, ansl);
+	free(mp); free(qp);
+	if (rq == NULL)
+		return (-1);
+	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
+		free(rq); return (-1);
+	}
+	status = http_post(cp, "/status_messages", sp->cookie, NULL,
+	    USER_AGENT, HTTP_POST_TYPE_JSON, rq);
+	free(rq);
+	if (status == HTTP_UNAUTHORIZED) {
+		warnx("You're not logged in. Please create a new session");
+		ret = -1;
+	} else if (status == HTTP_FOUND)
+		ret = 0;
+	else if (status == -1)
+		ret = -1;
+	else {
+		warnx("Server replied with code %d", status);
+		ret = -1;
+	}
+	ssl_disconnect(cp);
+	return (ret);
+}
+
+static int
 upload(session_t *sp, const char *aspect, const char *msg, char * const *files)
 {
 	int	   aid, i, j, n, ret, status, id[24];
@@ -878,8 +958,10 @@ upload(session_t *sp, const char *aspect, const char *msg, char * const *files)
 		if ((p = json_escape_str(msg)) == NULL)
 			return (-1);
 	} else
-		p = "";
-	if ((rq = strduprintf(tmpl, p, idstr, lst)) == NULL)
+		p = NULL;
+	rq = strduprintf(tmpl, msg != NULL ? p : "", idstr, lst);
+	free(p);
+	if (rq == NULL)
 		return (-1);
 	if ((cp = ssl_connect(sp->host, sp->port)) == NULL) {
 		free(rq); return (-1);
