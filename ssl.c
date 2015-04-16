@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2014 Marcel Kaiser. All rights reserved.
+ * Copyright (c) 2015 Marcel Kaiser. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -89,6 +89,10 @@ ssl_connect(const char *host, u_short port)
 		(void)close(s); SSL_free(handle);
 		return (NULL);
 	}
+
+	if (!SSL_set_tlsext_host_name(handle, host))
+		ERR_print_errors_fp(stderr);
+
 	if (SSL_connect(handle) != 1) {
 		ERR_print_errors_fp(stderr);
 		(void)close(s); SSL_free(handle);
